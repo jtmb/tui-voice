@@ -19,6 +19,8 @@ requirements remain.
   or anything else that makes the bottom bar taller. Rounded ends use half-cell
   caps inside the existing row. Keep fixed cell widths so the prompt does not shift
   between states.
+- Keep the status circle directly against the microphone. Reserve exactly one cell
+  after the microphone before the divider so the glyph cannot be clipped.
 - The settings screen is a **native-sized OpenCode dialog** (`large`, centered),
   not a full-screen page, and uses the active theme's dialog surface and native
   selected-row colors.
