@@ -284,9 +284,10 @@ function cycleNumber(key: keyof Settings, choices: number[], fallback: number, d
   void saveSetting(key, next)
 }
 
-function VoiceSettings(props: {data?: {sessionID?: string}}) {
+function VoiceSettings(props: {onClose: () => void}) {
   const context = usePlugin()
-  const theme = context.theme
+  const theme = context.theme.surface("dialog")
+  context.ui.dialog.set({size: "large", centered: true})
   const [selected, setSelected] = createSignal(1)
   const [devices, setDevices] = createSignal<string[]>([])
   const [testStatus, setTestStatus] = createSignal("")
@@ -454,8 +455,7 @@ function VoiceSettings(props: {data?: {sessionID?: string}}) {
   }
 
   function back() {
-    const sessionID = props.data?.sessionID
-    context.ui.router.navigate(sessionID ? {type: "session", sessionID} : {type: "home"})
+    props.onClose()
   }
 
   context.keymap.layer(() => ({
@@ -477,12 +477,9 @@ function VoiceSettings(props: {data?: {sessionID?: string}}) {
   }))
 
   return (
-    <box flexDirection="column" width="100%" height="100%" alignItems="center"
-      backgroundColor={theme.background.base} paddingTop={1}>
-      <box width="100%" maxWidth={88} flexDirection="column" border borderStyle="rounded"
-        borderColor={theme.border.base} backgroundColor={theme.background.raised.base}
-        paddingLeft={2} paddingRight={2} paddingTop={1} paddingBottom={1}>
-        <text fg={theme.text.action.primary.base}>VOICE</text>
+    <box flexDirection="column" width="100%" backgroundColor={theme.background.raised.base}
+      border borderStyle="rounded" borderColor={theme.border.base}
+      paddingLeft={2} paddingRight={2} paddingTop={1} paddingBottom={1}>
         <text fg={theme.text.base}>Voice settings</text>
         <text fg={theme.text.muted} wrapMode="word">
           Local dictation types into the message box. Nothing is sent automatically.
@@ -495,12 +492,12 @@ function VoiceSettings(props: {data?: {sessionID?: string}}) {
         ) : (
           <box flexDirection="column">
             <box flexDirection="row" paddingLeft={1} paddingRight={1}
-              backgroundColor={selected() === index() ? theme.background.raised.high : theme.background.raised.base}
+              backgroundColor={selected() === index() ? theme.background.action.primary.focused : undefined}
               onMouseDown={() => setSelected(index())}>
-              <text fg={selected() === index() ? theme.text.action.primary.base : theme.text.faint}>
+              <text fg={selected() === index() ? theme.text.action.primary.focused : theme.text.faint}>
                 {selected() === index() ? "▸ " : "  "}
               </text>
-              <text fg={selected() === index() ? theme.text.base : theme.text.muted}>{row.label}</text>
+              <text fg={selected() === index() ? theme.text.action.primary.focused : theme.text.muted}>{row.label}</text>
               <box flexGrow={1} />
               {row.adjust ? (
                 <box flexDirection="row">
@@ -510,7 +507,7 @@ function VoiceSettings(props: {data?: {sessionID?: string}}) {
                 </box>
               ) : (
                 <box onMouseDown={() => row.activate?.()}>
-                  <text fg={selected() === index() ? theme.text.action.primary.base : theme.text.base}>{row.value()}</text>
+                  <text fg={selected() === index() ? theme.text.action.primary.focused : theme.text.base}>{row.value()}</text>
                 </box>
               )}
             </box>
@@ -522,18 +519,19 @@ function VoiceSettings(props: {data?: {sessionID?: string}}) {
           </box>
         )}</For>
         <box height={1} />
-        <text fg={theme.text.faint} wrapMode="word">
-          ↑↓ select · ←→ change · Enter choose · Esc back
-        </text>
-      </box>
+        <box flexDirection="row" justifyContent="space-between" paddingTop={1}>
+          <text fg={theme.text.faint}>↑↓ select · ←→ change</text>
+          <box onMouseDown={() => props.onClose()}>
+            <text fg={theme.text.muted}>esc close</text>
+          </box>
+        </box>
     </box>
   )
 }
 
 function openSettings(context: any) {
-  const route = context.ui.router.current()
-  const sessionID = route?.type === "session" ? route.sessionID : undefined
-  context.ui.router.navigate({type: "plugin", name: "tui-voice-settings", data: {sessionID}})
+  context.ui.dialog.set({size: "large", centered: true})
+  context.ui.dialog.show(() => <VoiceSettings onClose={() => context.ui.dialog.clear()} />)
 }
 
 function VoiceButton(props: {sessionID?: string}) {
@@ -571,10 +569,6 @@ export default Plugin.define({
     const offFooter = context.ui.slot({
       append: "prompt.footer",
       render: input => <VoiceButton sessionID={input.sessionID} />,
-    })
-    const offSettings = context.ui.router.register({
-      name: "tui-voice-settings",
-      render: ({data}) => <VoiceSettings data={data as {sessionID?: string}} />,
     })
 
     context.keymap.layer(() => ({
@@ -618,7 +612,6 @@ export default Plugin.define({
     return () => {
       stopText()
       offFooter()
-      offSettings()
       stopVoice()
     }
   },
