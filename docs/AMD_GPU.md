@@ -6,10 +6,57 @@ default; GPU mode is explicit and reports failure instead of silently using the
 cold CPU speech path. Whisper dictation remains on its current CPU worker.
 
 **Actual Kokoro synthesis and performance on the owner's RX 7900 XT are still
-unverified.** Complete the inference check below before treating the setup as
-working. All synthesis stays local over the existing AF_UNIX socket.
+unverified.** The attempt on 2026-11-12 installed a complete ROCm 10.1 stack and
+then failed at the Windows display driver, before ONNX Runtime could build a
+session; see [section 1](#1-check-the-windows-driver-first). Complete the
+inference check below before treating the setup as working. All synthesis stays
+local over the existing AF_UNIX socket.
 
-## 1. Check the WSL and Python environments
+## 1. Check the Windows driver first
+
+The Windows display driver supplies `/dev/dxg` to WSL. A driver that predates
+AMD's Radeon WSL ROCm support can still create `/dev/dxg` while rejecting the
+GPU virtual-address reservation ROCm requires. Check the driver **before**
+installing or debugging any ROCm package:
+
+```powershell
+Get-CimInstance Win32_VideoController | Select-Object Name, DriverVersion, DriverDate
+```
+
+Compare that version with the Windows driver column in the WSL support matrix
+for the ROCm release you intend to install. Measured on this owner's machine:
+
+| Item | Measured |
+| --- | --- |
+| GPU | AMD Radeon RX 7900 XT |
+| Windows | 11 26H2, build 26300.9974 |
+| WSL | 2.6.2.0, kernel `6.6.87.2-microsoft-standard-WSL2` |
+| Display driver | `31.0.14000.58004`, 2022-12-02, Radeon Software `22.40.00.58` |
+| Outcome | blocked |
+
+That driver is from December 2022, before AMD's Radeon WSL ROCm support (the
+earliest Radeon WSL matrix entry is ROCm 6.1.3 with Adrenalin 24.10.21.01;
+current ROCDXG documentation pairs with Adrenalin 26.x). Symptoms with a
+complete ROCm 10.1 install on this host:
+
+- `dmesg` repeats `misc dxg: dxgkio_reserve_gpu_va: Ioctl failed: -75`.
+- `rocminfo`, `import migraphx`, and `tts_worker.py --check` all exit 139
+  (SIGSEGV) in `librocdxg` after
+  `[ReserveSvmSpace] ... fail to reserve gpu va` and
+  `fail to reserve Local Heap Space!`.
+- `rocm-sdk test` runs 19 tests with 2 errors (`amdflang --help` exits 255,
+  `rocminfo` segfaults).
+
+No userspace package or environment variable compensates for this. Install a
+current AMD Adrenalin driver (use the WSL2 build when AMD publishes one for the
+GPU), reboot Windows, and confirm `rocminfo` lists `gfx1100` before continuing.
+
+The driver install needs an elevated (UAC) prompt. An administrator account
+running in a normal, unelevated session cannot install the display driver, and
+no Python or environment change will fix the failure. Only proceed when
+`rocminfo` succeeds.
+
+## 2. Check the WSL and Python environments
 
 Run from the existing checkout. Adjust the overrides if the voice stack lives
 elsewhere; the model directory and TTS interpreter must refer to the same stack.
@@ -23,7 +70,8 @@ cat /etc/os-release
 uname -r
 ls -l /dev/dxg
 "$TUI_VOICE_TTS_PYTHON" --version
-"$TUI_VOICE_TTS_PYTHON" -m pip show kokoro-onnx onnxruntime onnxruntime-migraphx onnxruntime-ep-migraphx
+"$TUI_VOICE_TTS_PYTHON" -c "import onnxruntime, kokoro_onnx; print(onnxruntime.__version__, onnxruntime.get_available_providers())"
+uv pip freeze --python "$TUI_VOICE_TTS_PYTHON" 2>/dev/null || "$TUI_VOICE_TTS_PYTHON" -m pip freeze
 ```
 
 AMD's WSL bridge uses **`/dev/dxg`**, provided through the Windows driver. Missing
@@ -32,7 +80,7 @@ unavailable. After installing ROCm, `rocminfo` must identify the GPU (`gfx1100`
 for the RX 7900 XT). See [AMD's WSL explanation](https://rocm.docs.amd.com/projects/radeon-ryzen/en/docs-7.2.1/docs/install/installrad/wsl/howto_wsl.html)
 and [GPU specifications](https://rocm.docs.amd.com/en/latest/reference/gpu-specs.html).
 
-## 2. Install one matching AMD runtime
+## 3. Install one matching AMD runtime
 
 Use the AMD instructions for the complete stack you select. Its Windows driver,
 WSL support, ROCm libraries, Python version, and ONNX package must agree.
@@ -67,6 +115,34 @@ interpreter above is not Python 3.12, select a compatible environment through
 `TUI_VOICE_TTS_PYTHON` before installing these wheels. See
 [AMD's MIGraphX pip instructions](https://rocm.docs.amd.com/projects/ai-ecosystem/en/latest/inference/migraphx.html?rocm-ver=10.1.0).
 
+A uv-managed venv has no `pip` module, so `-m pip` fails with `No module named
+pip`. Use uv against that same interpreter; requirements and indexes are
+unchanged:
+
+```bash
+uv pip install --python "$TUI_VOICE_TTS_PYTHON" \
+  --index-url https://stable.repo.amd.com/rocm/migraphx/whl-next/ \
+  "migraphx==2.18.0+rocm10.1.0" "migraphx-libs==2.18.0+rocm10.1.0"
+uv pip install --python "$TUI_VOICE_TTS_PYTHON" \
+  --extra-index-url https://stable.repo.amd.com/rocm/onnxruntime/whl-next/ \
+  "onnxruntime-ep-migraphx==1.0.0+rocm10.1.0"
+```
+
+Also install the `rocm==10.1.0` and `rocm-sdk-*` wheels (core, libraries, and
+`rocm-sdk-device-gfx1100`) from the index named in AMD's ROCm 10.1 instructions,
+then confirm `rocm-sdk targets` lists `gfx1100`. Record
+`uv pip freeze --python "$TUI_VOICE_TTS_PYTHON"` **before** installing so the CPU
+stack can be restored.
+
+The measured install produced `onnxruntime==1.29.0`,
+`onnxruntime-ep-migraphx==1.0.0+rocm10.1.0`, `migraphx==2.18.0+rocm10.1.0`,
+`migraphx-libs==2.18.0+rocm10.1.0`, `rocm==10.1.0`, `rocm-sdk-core==10.1.0`,
+`rocm-sdk-libraries==10.1.0`, and `rocm-sdk-device-gfx1100==10.1.0`, alongside
+the existing `kokoro-onnx==0.6.1` and `numpy==2.5.4`. Do not mix routes: keep
+the legacy bundled `onnxruntime-migraphx` wheel out of an interpreter that uses
+the `onnxruntime-ep-migraphx` plugin, or provider registration and library
+versions can disagree.
+
 For an existing **ROCm 7.2** stack, its
 [versioned ONNX instructions](https://rocm.docs.amd.com/projects/radeon-ryzen/en/docs-7.2/docs/install/installrad/native_linux/install-onnx.html)
 use the bundled `onnxruntime-migraphx` wheel from
@@ -79,7 +155,7 @@ The usual PyPI `onnxruntime-gpu` package and Kokoro's `[gpu]` extra target
 Sources: [ONNX packages](https://onnxruntime.ai/docs/install/),
 [ROCm provider retirement](https://onnxruntime.ai/docs/execution-providers/ROCm-ExecutionProvider.html).
 
-## 3. Prepare and pin the FP32 model
+## 4. Prepare and pin the FP32 model
 
 GPU mode defaults to `models/kokoro-v1.0.onnx`; CPU mode keeps
 `models/kokoro-v1.0.int8.onnx`. FP32 is the initial GPU candidate so that CPU-oriented
@@ -141,7 +217,7 @@ or a path relative to `VOICE_DIR/models`. Its resolved file still needs a
 matching manifest entry. Keep model and package changes separate from the first
 GPU activation so results are attributable.
 
-## 4. Prove inference, then restart the worker
+## 5. Prove inference, then restart the worker
 
 ```bash
 export TUI_VOICE_TTS_PROVIDER=migraphx
@@ -167,8 +243,10 @@ After a successful check, the restarted worker's status must show MIGraphX and
 the selected FP32 model. A previously running CPU worker does not change when
 environment variables change; `--restart --kind tts` replaces it. Initial GPU
 model compilation can take longer than CPU startup; the helper allows up to
-300 seconds. To inspect initialization errors directly, stop TTS and run it in
-the foreground (or read `tts-startup.log` beside the TTS socket):
+300 seconds. If the GPU worker dies during startup, `warm --restart` exits 1 and
+names the startup log; on WSL2 a SIGSEGV/SIGABRT hint points back to the Windows
+driver and this document. To inspect initialization errors directly, stop TTS
+and run it in the foreground (or read `tts-startup.log` beside the TTS socket):
 
 ```bash
 python3 voice_helper.py warm --stop --kind tts
@@ -187,8 +265,25 @@ initialization and GPU compilation are separate costs.
 export TUI_VOICE_TTS_PROVIDER=cpu
 unset TUI_VOICE_TTS_MODEL
 python3 voice_helper.py warm --restart --kind tts
+python3 voice_helper.py warm --status
 ```
+
+`warm --status` must report `requested_provider: CPUExecutionProvider` and the
+`kokoro-v1.0.int8.onnx` model. Confirm speech with
+`say --text "CPU read aloud." --voice heart --no-play`; it should report
+`warm_chunks: 1` and no MIGraphX provider.
 
 Update any persisted provider/model exports and reopen OpenCode from that
 environment. This selects the original INT8 model and restores normal CPU
 fallback behavior.
+
+The AMD packages do not need to be removed for CPU use, but to return the
+interpreter to its pre-GPU state reinstall a captured freeze:
+
+```bash
+uv pip sync --python "$TUI_VOICE_TTS_PYTHON" /path/to/pre-gpu-freeze.txt
+```
+
+That removes the `onnxruntime-ep-migraphx`, `migraphx`, and `rocm-sdk-*` wheels
+and restores CPU-only ONNX Runtime. Keep the FP32 model file and its manifest pin;
+they are inert while CPU mode selects the INT8 model.

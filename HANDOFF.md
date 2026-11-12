@@ -1,5 +1,94 @@
 # tui-voice handoff
 
+## 2026-11-12 EST — AMD GPU attempt: blocked by the Windows driver
+
+- Environment: Windows 11 26H2 (build 26300.9974), WSL 2.6.2.0, WSL kernel
+  `6.6.87.2-microsoft-standard-WSL2`, Ubuntu 26.04 LTS, AMD Radeon RX 7900 XT.
+  Windows display driver `31.0.14000.58004` (2022-12-02, Radeon Software
+  `22.40.00.58`). `/dev/dxg` exists; `/dev/kfd` and `/dev/dri` do not (expected
+  for WSL).
+- TTS interpreter:
+  `/home/brajam/repos/fire-tv-next/lulu-launcher/voice/.venv/bin/python`
+  (Python 3.12.13). Installed the ROCm 10.1 pip stack there:
+  `onnxruntime==1.29.0`, `onnxruntime-ep-migraphx==1.0.0+rocm10.1.0`,
+  `migraphx==2.18.0+rocm10.1.0`, `migraphx-libs==2.18.0+rocm10.1.0`,
+  `rocm==10.1.0`, `rocm-sdk-core/libraries/device-gfx1100==10.1.0`.
+  `rocm-sdk targets` includes `gfx1100`. Kokoro remains `kokoro-onnx==0.6.1`
+  and `numpy==2.5.4`. The venv is uv-managed and has no `pip` module, so the
+  install used `uv pip install --python ...`.
+- Downloaded FP32 `models/kokoro-v1.0.onnx` (model-files-v1.0, 310.4 MB) and
+  added a locally computed integrity pin to the external `neural-models.json`:
+  SHA-256 `7d5df8ecf7d4b1878015a32686053fd0eebe2bc377234608764cc0ef3636a6c5`.
+  Existing INT8 (`ae315a…`) and voices (`bca610…`) pins are preserved and still
+  enforced. This FP32 digest is a local integrity pin, not an independently
+  published checksum.
+- **No GPU session could be created on this host.** Every HSA/MIGraphX attempt
+  fails before ONNX Runtime builds the graph:
+  - `TUI_VOICE_TTS_PROVIDER=migraphx tts_worker.py --check` exits 139 (SIGSEGV)
+    in `librocdxg` after repeated
+    `[ReserveSvmSpace] ... fail to reserve gpu va ...` and
+    `fail to reserve Local Heap Space!`.
+  - `dmesg` reports `misc dxg: dxgkio_reserve_gpu_va: Ioctl failed: -75`.
+  - `rocminfo` and `import migraphx` crash the same way.
+  - `rocm-sdk test`: 19 tests, 2 errors (`amdflang --help` exit 255,
+    `rocminfo` SIGSEGV).
+- Cause: the installed December 2022 display driver predates AMD's Radeon WSL
+  ROCm support. The earliest Radeon WSL matrix entry is ROCm 6.1.3 with
+  Adrenalin 24.10.21.01 for WSL 2; current ROCDXG documentation pairs with
+  Adrenalin 26.x. The host rejects the GPU virtual-address reservation the ROCm
+  runtime requires.
+- Smallest remaining action: on Windows, install a current AMD Adrenalin driver
+  (prefer the "for WSL2" build), reboot, then rerun
+  `TUI_VOICE_TTS_PROVIDER=migraphx tts_worker.py --check`. This needs an elevated
+  (UAC) install and a desktop reboot; the Windows account is an administrator but
+  the session is unelevated, and this unattended run must not take over the
+  desktop.
+- CPU remains the active backend and is verified:
+  - Direct CPU benchmark, 8 threads, same fixed phrase, ORT profiling disabled:
+
+    | Model | Load | First synthesis | Warm synthesis | Audio | Warm RTF |
+    | --- | --- | --- | --- | --- | --- |
+    | INT8 | 0.781 s | 3.057 s | 2.930 s | 2.572 s | 1.139 |
+    | FP32 | 0.597 s | 0.558 s | 0.455 s | 2.411 s | 0.189 |
+
+    The CPU FP32 export is faster than INT8 on this CPU/ORT build. This is a
+    measured CPU result, not a GPU speed claim. `tts_worker.py --check` enables
+    ORT profiling, which inflates its timings (INT8 warm 6.715 s).
+  - CPU worker restarted under `onnxruntime==1.29.0`; `warm --status` reports
+    `requested_provider: CPUExecutionProvider`,
+    `model: .../kokoro-v1.0.int8.onnx`. `say --no-play` reports
+    `warm_chunks: 1`; playback through Windows `SoundPlayer` exits 0 (audibility
+    was not independently verified).
+- Product/failure behavior verified:
+  - An explicit GPU request against a running CPU worker fails with
+    `TTS worker does not match the requested provider/model...` and exits 1; it
+    never speaks with CPU.
+  - `warm --restart --kind tts` with `migraphx` exits 1 and its error now
+    includes the GPU-crash driver hint; `warm --status` leaves `tts: null`.
+  - `warm --start/--restart` returns a nonzero exit code when any worker fails
+    (new regression test).
+  - Worker lifecycle still behaves: a worker started with
+    `warm --start --kind tts --idle-seconds 3` exited on its own, after which
+    `warm --status` reported `tts: null` and no `tts_worker.py` process remained.
+    Two concurrent `warm --start` calls produced exactly one worker (the second
+    reported `already running`).
+  - `say --voice velvet --no-play` returned `warm_chunks: 1`, so local voice
+    selection still works after the interpreter upgrade. TUI-level read-aloud,
+    mute/resume, and a fresh-TUI restart were not re-run this session; the plugin
+    code for those paths is unchanged, and earlier evidence is in
+    `docs/TESTING.md`.
+- A pre-GPU package freeze was captured at
+  `/tmp/opencode/tts-venv-before-gpu.txt`. It is temporary: capture a new
+  `uv pip freeze` before any retry, since `/tmp` may be cleared.
+- Dictation remains intact: the short fixture returns
+  `Turn on the living room lights.` (confidence 0.9322); a 37 s fixture returns
+  `chunks: 2`; a corrupt WAV returns a clear error and appends an `error` line to
+  `~/.local/state/tui-voice/voice.log`. `devices` still lists the Focusrite
+  Analogue 1 + 2 first.
+- 15 focused standard-library tests pass; `py_compile` and `git diff --check`
+  pass. GPU inference, GPU timings, and hardware acceptance remain **unverified**;
+  the PR stays draft.
+
 ## 2026-11-12 EST — long dictation and error logging
 
 - Turns are no longer capped by the ASR stack's 32 s limit. `voice_helper.py`

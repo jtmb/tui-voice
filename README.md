@@ -160,8 +160,10 @@ pinned in the existing local model manifest.
 Follow [`docs/AMD_GPU.md`](docs/AMD_GPU.md) for RX 7900 XT setup, model preparation,
 worker restart, and a real inference check. GPU availability is checked through
 WSL's `/dev/dxg` and the AMD runtime. **RX 7900 XT synthesis has not yet been
-verified on the owner's machine.** Whisper dictation continues using its current
-CPU worker.
+verified on the owner's machine.** The 2026-11-12 attempt installed the ROCm 10.1
+stack but stopped at the Windows display driver (`31.0.14000.58004`, 2022-12-02),
+which rejects the GPU address reservation ROCm needs; CPU remains the working
+backend. Whisper dictation continues using its current CPU worker.
 
 ## Privacy
 

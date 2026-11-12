@@ -743,7 +743,8 @@ def main():
                 output({'ok': True, 'stopped': stopped})
             time.sleep(0.2)
         started = {kind: start_worker(kind, args.idle_seconds) for kind in kinds}
-        output({'ok': all(item['ok'] for item in started.values()), 'started': started})
+        result = {'ok': all(item['ok'] for item in started.values()), 'started': started}
+        output(result, 0 if result['ok'] else 1)
     if args.command == 'devices':
         names = devices()
         selected, _ = choose_mic()

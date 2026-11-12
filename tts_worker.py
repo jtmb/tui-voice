@@ -487,8 +487,12 @@ def main():
         while time.monotonic() < deadline:
             code = process.poll()
             if code is not None and code != WORKER_BUSY_EXIT:
+                hint = ''
+                if code in (-signal.SIGABRT, -signal.SIGSEGV) and requested_provider() == GPU_PROVIDER:
+                    hint = (' The GPU worker crashed before serving. On WSL2, verify the '
+                            'Windows AMD driver supports ROCm; see docs/AMD_GPU.md.')
                 print(f'warm TTS exited during startup (status {code}); '
-                      f'see {log_path} or run tts_worker.py --run', file=sys.stderr)
+                      f'see {log_path} or run tts_worker.py --run.{hint}', file=sys.stderr)
                 raise SystemExit(1)
             if _ping(path):
                 status = admin_request('status', path)['result']

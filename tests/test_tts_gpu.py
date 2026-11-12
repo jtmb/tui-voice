@@ -214,6 +214,32 @@ class TtsGpuTests(unittest.TestCase):
                         self.assertEqual(result['warm_chunks'], 0)
                         cold.speak.assert_called_once_with('Hello.', 'heart')
 
+    def test_warm_start_exits_nonzero_when_worker_start_fails(self):
+        for ok in (True, False):
+            with self.subTest(ok=ok), \
+                 patch.object(sys, 'argv', ['voice_helper.py', 'warm', '--start', '--kind', 'tts']), \
+                 patch.object(helper, 'start_worker', return_value={'ok': ok}), \
+                 redirect_stdout(io.StringIO()):
+                with self.assertRaises(SystemExit) as failure:
+                    helper.main()
+                self.assertEqual(failure.exception.code, 0 if ok else 1)
+
+    def test_gpu_startup_crash_hint_is_actionable(self):
+        os.environ['TUI_VOICE_TTS_PROVIDER'] = 'migraphx'
+        path = self.root / 'runtime/tts.sock'
+        crashed = SimpleNamespace(poll=Mock(return_value=-signal.SIGSEGV))
+        stderr = io.StringIO()
+        with patch.object(sys, 'argv',
+                          ['tts_worker.py', '--start', '--socket', str(path)]), \
+             patch.object(worker.subprocess, 'Popen', return_value=crashed), \
+             patch.object(worker, '_ping', return_value=False), \
+             redirect_stderr(stderr):
+            with self.assertRaises(SystemExit) as failure:
+                worker.main()
+        self.assertEqual(failure.exception.code, 1)
+        self.assertIn('Windows AMD driver', stderr.getvalue())
+        self.assertIn('docs/AMD_GPU.md', stderr.getvalue())
+
 
 if __name__ == '__main__':
     unittest.main()
