@@ -57,23 +57,27 @@ Close the current TUI completely and start a new one from outside the repository
 (`cd ~`). `/reload` is not enough after a plugin path change.
 
 1. `opencode plugin list` includes `/home/brajam/repos/tui-voice`.
-2. Open a chat session. The bottom footer shows one compact rounded panel
+2. From the home screen, press `F9`/the mic. It must create a session and start
+   recording instead of showing "Open a chat session first."
+3. Press the mic again while listening. It must gracefully stop at that point and
+   transcribe the recorded audio into the draft.
+4. Open a chat session. The bottom footer shows one compact rounded panel
    (one footer row) with `▐○🎙 │🔊▌`-style half-cell caps and a divider.
-3. Press `Ctrl+Alt+V`. The status circle turns amber `●` and the mic segment
-   tints; a helper `record` process starts. The panel does not move or resize.
-4. Wait for silence / the maximum. It changes to `Transcribing`, then a transcript
+5. Press `Ctrl+Alt+V`. The status circle turns amber `●`; a helper `record` process
+   starts. The panel does not move or resize.
+6. Wait for silence / the maximum. It changes to `Transcribing`, then a transcript
    appears in the message box. Nothing is sent.
-5. Press `Ctrl+Alt+S`. A centered native-sized settings dialog opens; the footer
+7. Press `Ctrl+Alt+S`. A centered native-sized settings dialog opens; the footer
    chip hides cleanly behind the modal, and returns when `Esc` closes it. Arrows
    change values.
-6. With read-aloud On, send a short prompt in a disposable session and confirm a
+8. With read-aloud On, send a short prompt in a disposable session and confirm a
    `voice_helper.py say` process starts with the completed assistant text.
-7. Open settings, run **Test read-aloud**, then toggle footer `🔊` → `🔇`; the
+9. Open settings, run **Test read-aloud**, then toggle footer `🔊` → `🔇`; the
    current `say` process stops. Toggle back to `🔊`; a new `say` process starts
    with `--start-chunk` and the interrupted sample continues.
-8. Set read-aloud Off in settings, send another prompt, and confirm no `say`
+10. Set read-aloud Off in settings, send another prompt, and confirm no `say`
    process starts.
-9. Stop dictation and confirm no `voice_helper.py` process remains.
+11. Stop dictation and confirm no `voice_helper.py` process remains.
 
 ## Verified evidence
 

@@ -32,11 +32,16 @@ requirements remain.
 - A turn records the Windows microphone, transcribes locally, and **types the
   transcript into the OpenCode message box**. It must not cut off while the user is
   still speaking: a long pause threshold and a long hard maximum are required.
+- Dictation must start from the home screen and after `/new` without a manually
+  opened session. The first press creates and opens a session when needed.
+- A second press while listening must gracefully stop the recording at that point
+  and transcribe everything recorded so far. It must not drop the audio or force
+  the user to wait for another silence.
 - Never send the prompt automatically. The user reviews and sends it.
 - If the session is replying and the message box is hidden, transcription still
   happens immediately; hold the draft and insert it when the message box returns.
-- A second press while listening must not destroy the recording; the turn finishes
-  on silence or the configured maximum.
+- A second press while listening must stop and transcribe immediately; the turn can
+  also finish on silence or the configured maximum.
 
 ## Read-aloud
 

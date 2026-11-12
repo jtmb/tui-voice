@@ -1,5 +1,17 @@
 # tui-voice handoff
 
+## 2026-11-12 EST — home/slash-new dictation and press-to-stop
+
+- Pressing the mic from the home screen or after `/new` now creates a session,
+  navigates to it, and starts recording. The old "Open a chat session first."
+  refusal is gone.
+- A second press while listening sends `SIGUSR1` to the helper. ffmpeg finalizes
+  the WAV, the original flow transcribes everything recorded up to that point, and
+  the draft is inserted normally. It no longer kills the helper and drops audio.
+- Verified from home and `/new`: the first press opens a session and starts
+  `voice_helper.py record --seconds 60 --silence 1.5`; a manual `SIGUSR1` stop
+  returns a valid WAV JSON result.
+
 ## 2026-11-11 EST — dictation no longer cuts off mid-speech
 
 - Raised the normal pause threshold from 0.4 s to **1.5 s** and the hard maximum

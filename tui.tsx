@@ -189,17 +189,31 @@ function queueDraft(context: any, sessionID: string, text: string, running: bool
   void flushPending(context)
 }
 
+async function ensureSession(context: any) {
+  let route = context.ui.router.current()
+  if (route?.type === "session") return route
+  const created: any = await context.client.session.create({ location: context.location })
+  const sessionID = created?.data?.id ?? created?.id
+  if (!sessionID) throw new Error("Could not create a chat session.")
+  context.ui.router.navigate({type: "session", sessionID})
+  await delay(250)
+  route = context.ui.router.current()
+  if (route?.type === "session") return route
+  throw new Error("Could not open the new chat session.")
+}
+
 async function toggleVoice(context: any) {
   try {
     if (active()) {
-      toast(context, "Listening — pause to finish.", "info")
+      if (phase() === "listening" && child) {
+        try { child.kill("SIGUSR1") } catch {}
+        toast(context, "Finishing…", "info")
+      } else {
+        toast(context, "Working…", "info")
+      }
       return
     }
-    const route = context.ui.router.current()
-    if (route?.type !== "session") {
-      toast(context, "Open a chat session first.", "warning")
-      return
-    }
+    const route = await ensureSession(context)
     setActive(true)
     setPhase("listening")
     prewarmWorkers()

@@ -10,7 +10,7 @@ No cloud service, no TV, no Control Center login.
 
 ## Features
 
-- **Dictation into the draft** — one turn, local Whisper, text in the message box.
+- **Dictation into the draft** — one turn, local Whisper, text in the message box. Works from the home screen and `/new`; the first press opens a session.
 - **Silence auto-stop** — normal turns end after a pause; a 60 s hard maximum only stops a turn that never pauses.
 - **Works during a reply** — transcribes immediately and queues the draft until
   the message box returns.
@@ -67,8 +67,8 @@ Speak normally. The button shows `Listening`, then `Transcribing`; the transcrip
 appears in the message box. Edit it and send it yourself.
 
 If a reply is still running, the transcript is held and inserted when the message
-box returns. A second press while listening only reminds you to pause; it does not
-destroy the turn.
+box returns. A second press while listening stops the recording at that point and
+transcribes everything captured so far.
 
 ## Settings
 
@@ -105,7 +105,7 @@ speak into something else.
 ## How it works
 
 ```
-footer button / shortcut
+footer button / shortcut (home or `/new` opens a session)
         │
         ▼
 voice_helper.py record
@@ -172,7 +172,8 @@ before the next dictation or reply.
   keyboard paths are verified. Mouse delivery depends on terminal/tmux mouse mode.
 - **Footer never changes to Listening** — the plugin is not loaded in that TUI.
 - **No transcript** — run **Test microphone**, check the selected input, then raise
-  gain or pause duration.
+  gain or pause duration. Dictation works from home and `/new`; if it still
+  refuses, restart the TUI to load the current plugin.
 - **Always waits to the maximum** — room noise is above the silence threshold;
   raise the threshold toward −25 dB.
 - **Read-aloud is silent** — check for `🔇` in the footer, enable it in

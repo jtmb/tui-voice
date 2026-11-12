@@ -38,7 +38,10 @@ TUI-only plugin path.
 ## Dictation flow
 
 ```
-footer button / F9 / Ctrl+Alt+V / /dictate
+footer button / F9 / Ctrl+Alt+V / /dictate (home or `/new`)
+        │
+        ▼
+ensure a session exists (create + navigate if needed)
         │
         ▼
 prewarm ASR worker (fire-and-forget)
@@ -47,6 +50,7 @@ prewarm ASR worker (fire-and-forget)
 voice_helper.py record
   ffmpeg dshow → 16 kHz mono WAV
   silencedetect stops after N seconds of silence
+  second mic press sends SIGUSR1 → ffmpeg finalizes the WAV
   max turn is a hard stop
         │
         ▼
@@ -62,8 +66,8 @@ queueDraft / flushPending
 
 - The transcript is never sent. It is typed into the focused prompt using the
   renderer's stdin path.
-- A second press while listening only reminds the user to pause; it does not
-  destroy the recording.
+- A second press while listening sends SIGUSR1, finalizes the WAV, and transcribes
+  everything recorded up to that point.
 - If a reply starts or is already running, the draft is inserted when the TUI
   exposes the message box again. Changing sessions discards a pending draft rather
   than inserting it into the wrong chat.
