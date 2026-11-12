@@ -577,12 +577,8 @@ export default Plugin.define({
     })
 
     const offFooter = context.ui.slot({
-      append: "session.composer.top",
-      render: input => (
-        <box width="100%" flexDirection="row" justifyContent="flex-end">
-          <VoiceButton sessionID={input.sessionID} />
-        </box>
-      ),
+      append: "prompt.footer",
+      render: input => <VoiceButton sessionID={input.sessionID} />,
     })
 
     context.keymap.layer(() => ({
