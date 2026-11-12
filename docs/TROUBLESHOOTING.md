@@ -36,8 +36,9 @@ Do not move it to the composer, a dialog, or an overlay.
 
 ## It waits too long
 
-- Lower **Maximum turn** (hard stop).
-- Lower **Finish after a pause** so silence ends the turn sooner.
+- Keep **Maximum turn** long. Normal turns end on a pause; the maximum is a safety stop.
+- Lower **Finish after a pause** only if you want faster turns. The default is
+  1.5 s so a brief pause or breath does not cut you off.
 - If it always runs to the maximum, room noise is above the silence threshold.
   Raise the threshold toward −25 dB, or test the mic level first.
 

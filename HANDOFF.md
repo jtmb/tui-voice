@@ -1,5 +1,18 @@
 # tui-voice handoff
 
+## 2026-11-11 EST — dictation no longer cuts off mid-speech
+
+- Raised the normal pause threshold from 0.4 s to **1.5 s** and the hard maximum
+  from 4 s to **60 s**. The maximum is now a safety stop only; normal turns still
+  end on a pause.
+- Existing stored settings below 15 s / 0.8 s are migrated automatically on
+  plugin setup, so the old 5 s cutoff does not persist.
+- Raised the plugin record timeout from 45 s to 120 s so the helper cannot kill
+  a long turn before the 60 s hard stop.
+- Settings choices now expose 0.8–2.5 s pause and 15–90 s maximum.
+- Verified in a fresh TUI: record runs with `--seconds 60 --silence 1.5`, and the
+  settings dialog shows `1.5 s` / `60 s`.
+
 ## 2026-11-11 EST — compact footer panel
 
 - Replaced the two separated footer buttons with one compact rounded panel that
@@ -103,7 +116,7 @@
   `~/repos/fire-tv-next/lulu-launcher/service`; use `TUI_VOICE_SERVICE` and
   `TUI_VOICE_PYTHON` to relocate it.
 - Settings values may still reflect manual tuning from acceptance (for example,
-  0.5 s / 5 s). **Reset to defaults** restores 0.4 s / 4 s / −35 dB / 0 dB /
+  0.5 s / 5 s). **Reset to defaults** restores 1.5 s / 60 s / −35 dB / 0 dB /
   read-aloud On / Heart.
 
 ## Preservation

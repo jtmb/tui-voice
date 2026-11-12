@@ -17,7 +17,7 @@ type Settings = { mic: string; voice: string; seconds: number; silence: number; 
 const [active, setActive] = createSignal(false)
 const [phase, setPhase] = createSignal<Phase>("idle")
 const [settingsOpen, setSettingsOpen] = createSignal(false)
-let settings: Settings = { mic: "", voice: "heart", seconds: 4, silence: 0.4, threshold: -35, gain: 0, readAloud: true }
+let settings: Settings = { mic: "", voice: "heart", seconds: 60, silence: 1.5, threshold: -35, gain: 0, readAloud: true }
 let updateSettings: ((mutation: (draft: Settings) => void) => Promise<void>) | undefined
 let child: ChildProcess | null = null
 let pendingDraft: {sessionID: string; text: string} | null = null
@@ -206,13 +206,13 @@ async function toggleVoice(context: any) {
     toast(context, "Listening… speak now, then pause.", "info")
     const args = [
       "record",
-      "--seconds", String(settings.seconds ?? 4),
-      "--silence", String(settings.silence ?? 0.4),
+      "--seconds", String(settings.seconds ?? 60),
+      "--silence", String(settings.silence ?? 1.5),
       "--threshold", String(settings.threshold ?? -35),
       "--gain", String(settings.gain ?? 0),
     ]
     if (settings.mic) args.push("--mic", settings.mic)
-    const recording = await helperPayload(args, 45000)
+    const recording = await helperPayload(args, 120000)
     if (!active()) return
     setPhase("transcribing")
     const heard = await helperPayload(["transcribe", "--wav", recording.path], 150000)
@@ -313,8 +313,8 @@ type SettingsRow =
       activate?: () => void
     }
 
-const SILENCE_CHOICES = [0.3, 0.4, 0.5, 0.6, 0.8, 1.0, 1.2]
-const MAX_CHOICES = [3, 4, 5, 6, 8, 10, 12]
+const SILENCE_CHOICES = [0.8, 1.0, 1.2, 1.5, 2.0, 2.5]
+const MAX_CHOICES = [15, 20, 30, 45, 60, 90]
 const THRESHOLD_CHOICES = [-25, -30, -35, -40, -45]
 const GAIN_CHOICES = [0, 3, 6, 9, 12, 15, 18]
 const VOICE_PRESETS = [
@@ -361,8 +361,8 @@ function VoiceSettings(props: {onClose: () => void}) {
   const [devices, setDevices] = createSignal<string[]>([])
   const [testStatus, setTestStatus] = createSignal("")
 
-  const silence = () => Number(settings.silence ?? 0.4)
-  const maxSeconds = () => Number(settings.seconds ?? 4)
+  const silence = () => Number(settings.silence ?? 1.5)
+  const maxSeconds = () => Number(settings.seconds ?? 60)
   const threshold = () => Number(settings.threshold ?? -35)
   const gain = () => Number(settings.gain ?? 0)
   const mic = () => settings.mic || "Automatic"
@@ -413,8 +413,8 @@ function VoiceSettings(props: {onClose: () => void}) {
     if (!updateSettings) return
     await updateSettings(draft => {
       draft.mic = ""
-      draft.seconds = 4
-      draft.silence = 0.4
+      draft.seconds = 60
+      draft.silence = 1.5
       draft.threshold = -35
       draft.gain = 0
       draft.readAloud = true
@@ -430,15 +430,15 @@ function VoiceSettings(props: {onClose: () => void}) {
       {kind: "section", title: "TIMING"},
       {
         kind: "item", id: "silence", label: "Finish after a pause",
-        description: "Increase this if words at pauses are being cut off. 0.4 s is fast; 0.6–0.8 s is more forgiving.",
+        description: "Default 1.5 s avoids cutting between words or thoughts. Lower it only if you want faster turns.",
         value: () => `${silence().toFixed(1)} s`,
-        adjust: direction => cycleNumber("silence", SILENCE_CHOICES, 0.4, direction),
+        adjust: direction => cycleNumber("silence", SILENCE_CHOICES, 1.5, direction),
       },
       {
         kind: "item", id: "seconds", label: "Maximum turn",
-        description: "Hard stop when no silence is detected. Keep it short for dictation.",
+        description: "Hard stop if silence is never detected. Normal turns end on a pause; keep this long so a long sentence is not cut off.",
         value: () => `${maxSeconds()} s`,
-        adjust: direction => cycleNumber("seconds", MAX_CHOICES, 4, direction),
+        adjust: direction => cycleNumber("seconds", MAX_CHOICES, 60, direction),
       },
       {kind: "section", title: "MICROPHONE"},
       {
@@ -671,8 +671,12 @@ export default Plugin.define({
   id: "tui.voice",
   async setup(context) {
     const [stored, update] = context.storage.store<Settings>("tui-voice", {
-      initial: {mic: "", voice: "heart", seconds: 4, silence: 0.4, threshold: -35, gain: 0, readAloud: true},
+      initial: {mic: "", voice: "heart", seconds: 60, silence: 1.5, threshold: -35, gain: 0, readAloud: true},
     })
+    const current = stored as Settings
+    if ((Number(current.seconds) || 60) < 15 || (Number(current.silence) || 1.5) < 0.8) {
+      await update(draft => { draft.seconds = 60; draft.silence = 1.5 })
+    }
     settings = stored as Settings
     updateSettings = update
     onToggle = () => { void toggleVoice(context) }

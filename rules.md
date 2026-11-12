@@ -30,7 +30,8 @@ requirements remain.
 ## Dictation
 
 - A turn records the Windows microphone, transcribes locally, and **types the
-  transcript into the OpenCode message box**.
+  transcript into the OpenCode message box**. It must not cut off while the user is
+  still speaking: a long pause threshold and a long hard maximum are required.
 - Never send the prompt automatically. The user reviews and sends it.
 - If the session is replying and the message box is hidden, transcription still
   happens immediately; hold the draft and insert it when the message box returns.
@@ -53,7 +54,7 @@ requirements remain.
 - Settings are global and persisted under `tui-voice`.
 - The screen tunes: pause before finishing, maximum turn, input device, silence
   threshold, input gain, microphone test, read-aloud, read-aloud voice, reset.
-- Defaults: 0.4 s pause, 4 s maximum, automatic microphone, −35 dB, 0 dB gain,
+- Defaults: 1.5 s pause, 60 s maximum, automatic microphone, −35 dB, 0 dB gain,
   read-aloud On, Heart.
 - Keyboard: `↑↓` select, `←→` change, `Enter` choose, `Esc` close.
 - Settings must affect the actual recorder, not just the UI.

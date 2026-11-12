@@ -11,7 +11,7 @@ No cloud service, no TV, no Control Center login.
 ## Features
 
 - **Dictation into the draft** — one turn, local Whisper, text in the message box.
-- **Silence auto-stop** — stops shortly after you pause; 4 s hard maximum.
+- **Silence auto-stop** — normal turns end after a pause; a 60 s hard maximum only stops a turn that never pauses.
 - **Works during a reply** — transcribes immediately and queues the draft until
   the message box returns.
 - **Read-aloud** — speaks completed assistant replies through Windows speakers.
@@ -77,8 +77,8 @@ theme. Keyboard: `↑↓` select, `←→` change, `Enter` choose, `Esc` close.
 
 | Setting | Default | What it does |
 | --- | --- | --- |
-| Finish after a pause | 0.4 s | Silence before the turn ends |
-| Maximum turn | 4 s | Hard stop if silence is not detected |
+| Finish after a pause | 1.5 s | Silence before the turn ends |
+| Maximum turn | 60 s | Hard stop only if silence is never detected |
 | Input | Automatic | Windows microphone; automatic prefers the real input |
 | Silence threshold | −35 dB | Higher values (−25) treat more room noise as silence |
 | Input gain | Off | Boost a quiet mic; try 6–12 dB |
@@ -96,7 +96,7 @@ theme. Keyboard: `↑↓` select, `←→` change, `Enter` choose, `Esc` close.
    problem.
 3. Raise **Input gain** for a quiet input.
 4. Adjust **Silence threshold** if room noise prevents auto-stop.
-5. Increase **Maximum turn** only for long dictation.
+5. Keep **Maximum turn** long; normal turns end on a pause. It is only a safety stop.
 
 The virtual Steam Streaming Microphone is silent on this machine. Automatic
 selection prefers the Focusrite Analogue input; choose **Input** explicitly if you

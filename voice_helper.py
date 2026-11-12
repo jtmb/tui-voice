@@ -169,9 +169,9 @@ def choose_mic(requested=None):
     return selected, names
 
 
-def record(seconds, path=None, mic=None, silence=0.9, threshold=-35, gain=0):
+def record(seconds, path=None, mic=None, silence=1.5, threshold=-35, gain=0):
     device, names = choose_mic(mic)
-    seconds = max(1, min(20, int(seconds)))
+    seconds = max(1, min(120, int(seconds)))
     if not path:
         path = windows_temp() / ('tui-voice-' + str(os.getpid()) + '.wav')
     path = Path(path)
@@ -522,10 +522,10 @@ def main():
 
     sub.add_parser('devices')
     capture = sub.add_parser('record')
-    capture.add_argument('--seconds', type=int, default=7)
+    capture.add_argument('--seconds', type=int, default=60)
     capture.add_argument('--out')
     capture.add_argument('--mic')
-    capture.add_argument('--silence', type=float, default=0.9)
+    capture.add_argument('--silence', type=float, default=1.5)
     capture.add_argument('--threshold', type=float, default=-35)
     capture.add_argument('--gain', type=float, default=0)
 
