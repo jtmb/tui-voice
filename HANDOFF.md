@@ -10,7 +10,7 @@
 - The voice button is back in the **prompt footer** after the owner explicitly
   rejected moving it. It uses mouse-down/up with a debounce, is focusable, and
   keeps `Ctrl+Alt+V`, `F9`, and `/dictate` as keyboard paths. A fresh TUI from
-  outside the repo showed `◉ Voice` and `Ctrl+Alt+V` changed it to `◉ Listening`.
+  outside the repo showed `🎙` microphone icon and `Ctrl+Alt+V` changed it to the Listening state.
 - `Ctrl+Alt+S` opens a **centered, native-sized (`large`) OpenCode dialog** using
   `theme.surface("dialog")`, dialog border/background, and native
   `background.action.primary.focused` / `text.action.primary.focused` selected-row

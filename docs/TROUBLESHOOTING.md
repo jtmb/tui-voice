@@ -12,7 +12,7 @@
 
 ## Button is in the wrong place
 
-The owner requirement is fixed: `◉ Voice` must stay in the **bottom prompt footer**.
+The owner requirement is fixed: `🎙` microphone icon must stay in the **bottom prompt footer**.
 Do not move it to the composer, a dialog, or an overlay.
 
 ## Button click does nothing

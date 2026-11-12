@@ -6,7 +6,7 @@ requirements remain.
 
 ## Placement
 
-- The `◉ Voice` button lives in the **bottom footer** of a chat session.
+- The `🎙` microphone icon button lives in the **bottom footer** of a chat session.
 - Do not move it to the composer, a floating overlay, a full-screen route, or a
   different corner.
 - The `🔊` / `🔇` button sits next to Voice in the same bottom footer.
@@ -56,7 +56,7 @@ requirements remain.
 
 ## Verification gates
 
-- Fresh TUI from outside the repository: `◉ Voice` is in the bottom footer.
+- Fresh TUI from outside the repository: `🎙` microphone icon is in the bottom footer.
 - `Ctrl+Alt+V`/`F9`/`/dictate` changes it to `Listening`.
 - A test turn inserts the exact transcript and does not send.
 - A turn during a running reply queues and later inserts.

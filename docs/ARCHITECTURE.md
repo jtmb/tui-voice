@@ -23,7 +23,7 @@ list as well.
 
 `tui.tsx` exports a `Plugin.define` with id `tui.voice` and:
 
-- a `prompt.footer` slot containing `◉ Voice`;
+- a `prompt.footer` slot containing `🎙` microphone icon;
 - a command layer with `Ctrl+Alt+V`, `F9`, `/dictate`, settings (`Ctrl+Alt+S`),
   and microphone selection;
 - a `session.text.ended` subscription for read-aloud;

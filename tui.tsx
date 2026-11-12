@@ -569,7 +569,7 @@ function VoiceButton(props: {sessionID?: string}) {
     }
   })
   return (
-    <text fg={phaseColor()} onMouseDown={activate} onMouseUp={activate}>◉</text>
+    <text fg={phaseColor()} onMouseDown={activate} onMouseUp={activate}>🎙</text>
   )
 }
 

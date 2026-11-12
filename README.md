@@ -53,7 +53,7 @@ Open a chat session and use the bottom footer button or a shortcut:
 
 | Action | Control |
 | --- | --- |
-| Dictate | `◉ Voice` in the bottom footer |
+| Dictate | `🎙` microphone icon in the bottom footer |
 | Dictate | `Ctrl+Alt+V` |
 | Dictate | `F9` |
 | Dictate | `/dictate` |
