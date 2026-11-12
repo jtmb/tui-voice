@@ -2,20 +2,20 @@
 
 ## 2026-11-11 EST — compact footer panel
 
-- Replaced the two separated footer buttons with one compact one-row chip:
-  half-cell rounded caps, one cell of padding at each end, mic + status circle, a
-  recessed `│` divider, then the speaker. Fixed widths keep the prompt from
-  shifting.
-- Switched the microphone glyph to `🎤` because its left/right bearings are
-  symmetric; `🎙` carried a ~26% left bearing that made the end spacing look
-  uneven. With one cell of padding at each end and the half-cell caps, the visible
-  left/right gutters are within ~0.14 cell of each other.
+- Replaced the two separated footer buttons with one compact rounded panel that
+  stays in the existing **one-row** footer: half-cell rounded caps, the status
+  circle + studio microphone `🎙`, a recessed `│` divider, then the speaker.
+- Kept `🎙` (the handheld `🎤` read as a flashlight). The status circle comes
+  first so the panel begins on a compact glyph. There is no horizontal padding;
+  the half-cell caps themselves provide the end gutters.
+- Explicitly rejected a three-row rounded border: the footer bar must not grow.
 - State styling is the status circle only: blue `○` idle, amber `●` listening,
   cyan `◐` transcribing, red `✕` error. No tinted block.
-- The footer chip hides while the settings dialog is open, because the dialog
-  overlay covered the speaker and left a broken-looking half-panel.
-- Verified in a fresh TUI: `🎤○│🔊`, `🎤●│🔊`, and `🎤○│🔇` all occupy the
-  same columns.
+- The panel hides while the settings dialog is open, returning an empty one-row
+  spacer so the footer does not jump when the dialog closes.
+- Verified in a fresh TUI at 80, 100, and 140 columns: `▐○🎙│🔊▌`,
+  `▐●🎙│🔊▌`, and `▐○🎙│🔇▌` keep the same columns and the footer stays one
+  row.
 
 ## 2026-11-11 EST — persistent warm ASR and TTS workers
 

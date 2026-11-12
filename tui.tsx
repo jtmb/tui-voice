@@ -640,10 +640,10 @@ function VoiceButton(props: {sessionID?: string; panel: any}) {
   return (
     <box flexDirection="row" backgroundColor={props.panel}
       onMouseDown={activate} onMouseUp={activate}>
-      <text onMouseDown={activate} onMouseUp={activate}>🎤</text>
       <text fg={indicator().color} onMouseDown={activate} onMouseUp={activate}>
         {indicator().glyph}
       </text>
+      <text onMouseDown={activate} onMouseUp={activate}>🎙</text>
     </box>
   )
 }
@@ -704,8 +704,7 @@ export default Plugin.define({
         return (
           <box flexDirection="row" height={1}>
             <text fg={panel}>▐</text>
-            <box flexDirection="row" height={1} backgroundColor={panel}
-              paddingLeft={1} paddingRight={1}>
+            <box flexDirection="row" height={1} backgroundColor={panel}>
               <VoiceButton sessionID={input.sessionID} panel={panel} />
               <text fg={theme.background?.raised?.base}>│</text>
               <MuteButton panel={panel} />

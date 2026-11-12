@@ -102,8 +102,8 @@ plugin requires closing and reopening the TUI; `/reload` alone is not sufficient
 ## Verification checklist
 
 - `opencode plugin list` includes `/home/brajam/repos/tui-voice`.
-- Fresh TUI from outside this repo shows the compact footer panel: `🎤` plus
-  status circle, divider, and speaker; widths do not shift between states.
+- Fresh TUI from outside this repo shows the compact rounded footer panel: status circle, `🎙`, divider, and speaker
+  in the same one-row footer bar; widths do not shift between states.
 - `Ctrl+Alt+V` changes its status circle from `○` to amber `●` (`Listening`).
 - A short spoken turn inserts text into the message box and does not send.
 - Dictation while a reply runs transcribes and inserts after the reply.

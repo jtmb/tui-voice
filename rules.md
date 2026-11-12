@@ -6,16 +6,19 @@ requirements remain.
 
 ## Placement
 
-- The `🎤` microphone icon button lives in the **bottom footer** of a chat session.
+- The `🎙` microphone icon button lives in the **bottom footer** of a chat session.
 - Do not move it to the composer, a floating overlay, a full-screen route, or a
   different corner.
 - It must visibly change state while listening/transcribing: `○` idle, amber `●`
   listening, cyan `◐` transcribing, `✕` error. Do not leave it visually idle.
 - The `🔊` / `🔇` button sits next to Voice in the same bottom footer.
   It toggles read-aloud and immediately stops current playback. Do not move it.
-- Microphone and speaker share **one compact one-row panel**: microphone + status
-  circle, a subtle divider, then speaker. Keep fixed cell widths so the prompt does
-  not shift between states. It is a chip, not a big box.
+- Microphone and speaker share **one compact rounded panel**: status circle +
+  microphone, a subtle divider, then speaker.
+- **The footer bar must stay one row tall.** Do not add a border, vertical padding,
+  or anything else that makes the bottom bar taller. Rounded ends use half-cell
+  caps inside the existing row. Keep fixed cell widths so the prompt does not shift
+  between states.
 - The settings screen is a **native-sized OpenCode dialog** (`large`, centered),
   not a full-screen page, and uses the active theme's dialog surface and native
   selected-row colors.
@@ -62,7 +65,7 @@ requirements remain.
 
 ## Verification gates
 
-- Fresh TUI from outside the repository: `🎤` microphone icon is in the bottom footer.
+- Fresh TUI from outside the repository: `🎙` microphone icon is in the bottom footer.
 - `Ctrl+Alt+V`/`F9`/`/dictate` changes it to `Listening`.
 - A test turn inserts the exact transcript and does not send.
 - A turn during a running reply queues and later inserts.
