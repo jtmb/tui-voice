@@ -30,6 +30,42 @@ Expected:
 - `transcribe` returns “Turn on the living room lights.” with confidence around
   0.93. With the warm worker it completes in about half a second.
 
+## Long-turn and log checks
+
+Build a recording longer than 32 s by repeating two different fixtures, then
+transcribe it:
+
+```bash
+python3 - <<'PY'
+import wave
+from pathlib import Path
+base = Path.home()/'repos/fire-tv-next/lulu-launcher/voice/fixtures'
+out = Path('/tmp/opencode/long-turn.wav')
+parts = []
+for name in ('long-12s', 'medium-4s', 'short-2s',
+             'long-12s', 'medium-4s', 'short-2s', 'long-12s'):
+    with wave.open(str(base/(name + '.wav')), 'rb') as wav:
+        params = wav.getparams()
+        parts.append(wav.readframes(wav.getnframes()))
+with wave.open(str(out), 'wb') as wav:
+    wav.setparams(params)
+    for frames in parts:
+        wav.writeframes(frames)
+PY
+$SERVICE/.venv/bin/python voice_helper.py transcribe --wav /tmp/opencode/long-turn.wav
+```
+
+Expected: a transcript with `"chunks": 2` (or more), no “Audio duration outside
+finite budget” error, and a `transcribed` line in
+`~/.local/state/tui-voice/voice.log` showing the chunk count and elapsed time.
+Feed a corrupt WAV to confirm failures are logged, not only toasted:
+
+```bash
+head -c 200 /dev/urandom > /tmp/opencode/bad.wav
+$SERVICE/.venv/bin/python voice_helper.py transcribe --wav /tmp/opencode/bad.wav
+tail -1 ~/.local/state/tui-voice/voice.log
+```
+
 ## Warm-worker checks
 
 ```bash

@@ -42,6 +42,10 @@ requirements remain.
   happens immediately; hold the draft and insert it when the message box returns.
 - A second press while listening must stop and transcribe immediately; the turn can
   also finish on silence or the configured maximum.
+- A turn longer than the ASR 32 s budget must be split into safe chunks and the
+  text joined; it must never fail with "Audio duration outside finite budget".
+- Failures must append to the local log at `~/.local/state/tui-voice/voice.log`
+  (override `TUI_VOICE_LOG_DIR`) with the helper error and traceback.
 
 ## Read-aloud
 

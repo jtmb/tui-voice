@@ -1,5 +1,23 @@
 # tui-voice handoff
 
+## 2026-11-12 EST — long dictation and error logging
+
+- Turns are no longer capped by the ASR stack's 32 s limit. `voice_helper.py`
+  splits longer recordings into chunks under 28 s, cuts at the quietest point near
+  the boundary so a word is not split, transcribes each chunk (warm, then cold),
+  and joins the text in order.
+- A 45.5 s recording was verified with `"chunks": 2` and a valid transcript; the
+  previous code raised `ValueError: Audio duration outside finite budget`.
+- Added a local JSON-lines log at `~/.local/state/tui-voice/voice.log`
+  (`TUI_VOICE_LOG_DIR` override, 1 MB roll). The helper logs recordings,
+  transcripts, worker-start failures, chunk failures, and full tracebacks; the
+  plugin logs helper timeouts, spawn/exit failures, dictation, read-aloud,
+  microphone selection, and microphone-test errors.
+- Cached one cold `WebVoice` so chunked cold transcription does not rebuild the
+  stack per chunk.
+- Verified: a corrupt WAV returns a clear error and appends an error line; a valid
+  2 s fixture logs `transcribed` with `chunks: 1`.
+
 ## 2026-11-12 EST — home/slash-new dictation and press-to-stop
 
 - Pressing the mic from the home screen or after `/new` now creates a session,

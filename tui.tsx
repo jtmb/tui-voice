@@ -1,15 +1,30 @@
 import { Plugin, usePlugin } from "@opencode/plugin/tui"
 import { createEffect, createSignal, For } from "solid-js"
 import { spawn, type ChildProcess } from "node:child_process"
-import { readFileSync, rmSync } from "node:fs"
+import { appendFileSync, mkdirSync, readFileSync, rmSync } from "node:fs"
+import { homedir } from "node:os"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const HELPER = join(HERE, "voice_helper.py")
 const SPEECH_PROGRESS = "/tmp/opencode/tui-voice-speech.json"
+const LOG_FILE = join(process.env.XDG_STATE_HOME || join(homedir(), ".local", "state"),
+  "tui-voice", "voice.log")
 const PYTHON = process.env.TUI_VOICE_PYTHON
   || "/home/brajam/repos/fire-tv-next/lulu-launcher/service/.venv/bin/python"
+
+function logError(where: string, error: any, detail?: string) {
+  try {
+    mkdirSync(dirname(LOG_FILE), {recursive: true})
+    const record: any = {
+      time: new Date().toISOString(), level: "error", source: "plugin", where,
+      message: String(error?.message ?? error ?? "unknown error"),
+    }
+    if (detail) record.detail = detail.slice(-2000)
+    appendFileSync(LOG_FILE, JSON.stringify(record) + "\n")
+  } catch {}
+}
 
 type Phase = "idle" | "listening" | "transcribing" | "thinking" | "speaking" | "error"
 type Settings = { mic: string; voice: string; seconds: number; silence: number; threshold: number; gain: number; readAloud: boolean }
@@ -57,6 +72,7 @@ function helperPayload(args: string[], timeoutMs: number, track?: (child: ChildP
     let stderr = ""
     const timer = setTimeout(() => {
       childProcess.kill("SIGTERM")
+      logError("helper timeout", new Error("Voice helper timed out"), args.join(" "))
       reject(new Error("Voice helper timed out"))
     }, timeoutMs)
     childProcess.stdout?.on("data", data => { stdout += String(data) })
@@ -65,6 +81,7 @@ function helperPayload(args: string[], timeoutMs: number, track?: (child: ChildP
       clearTimeout(timer)
       if (child === childProcess) child = null
       track?.(null)
+      logError("helper spawn", error, args.join(" "))
       reject(error)
     })
     childProcess.on("close", code => {
@@ -73,12 +90,19 @@ function helperPayload(args: string[], timeoutMs: number, track?: (child: ChildP
       track?.(null)
       let payload: any = null
       try { payload = JSON.parse(stdout.trim().split("\n").at(-1) || "{}") } catch {}
-      if (payload?.ok === false) { reject(new Error(payload.error || "Voice helper failed")); return }
+      if (payload?.ok === false) {
+        logError("helper failed", payload.error || "Voice helper failed", stderr.trim())
+        reject(new Error(payload.error || "Voice helper failed")); return
+      }
       if (code !== 0) {
+        if (code !== null) logError("helper exit", new Error(`Voice helper exited ${code}`), stderr.trim())
         reject(new Error(stderr.trim() || `Voice helper exited ${code}`))
         return
       }
-      if (!payload) { reject(new Error("Voice helper returned unreadable output")); return }
+      if (!payload) {
+        logError("helper output", new Error("Voice helper returned unreadable output"), stdout.slice(-2000))
+        reject(new Error("Voice helper returned unreadable output")); return
+      }
       resolve(payload)
     })
   })
@@ -236,6 +260,7 @@ async function toggleVoice(context: any) {
     const running = await sessionRunning(context, route.sessionID)
     queueDraft(context, route.sessionID, text, running)
   } catch (error: any) {
+    logError("dictation", error)
     if (active()) {
       stopVoice()
       setPhase("error")
@@ -290,7 +315,8 @@ function speakReply(context: any, text: string, options?: {startChunk?: number; 
         "--progress-file", SPEECH_PROGRESS,
       ], 240000, process => { speechChild = process })
       interruptedSpeech = null
-    } catch {
+    } catch (error) {
+      if (speechState === state) logError("read-aloud", error)
       // A mute/interrupt keeps interruptedSpeech for resume.
     } finally {
       if (speechState === state) speechState = null
@@ -312,7 +338,7 @@ async function chooseMic(context: any) {
       await updateSettings(draft => { draft.mic = String(choice) })
       toast(context, "Microphone set to " + choice, "success")
     }
-  } catch (error: any) { toast(context, error?.message || "Could not list microphones.", "error") }
+  } catch (error: any) { logError("microphone list", error); toast(context, error?.message || "Could not list microphones.", "error") }
 }
 
 type SettingsRow =
@@ -395,6 +421,7 @@ function VoiceSettings(props: {onClose: () => void}) {
       })
       if (choice !== undefined) await saveSetting("mic", String(choice))
     } catch (error: any) {
+      logError("microphone select", error)
       setTestStatus(error?.message || "Could not list microphones.")
     }
   }
@@ -419,6 +446,7 @@ function VoiceSettings(props: {onClose: () => void}) {
       setTestStatus(`Input level ${Math.round(level)} · ${label} · peak ${result.peak ?? 0}`)
       try { rmSync(result.path, {force: true}) } catch {}
     } catch (error: any) {
+      logError("microphone test", error)
       setTestStatus(error?.message || "Microphone test failed.")
     }
   }
@@ -510,7 +538,7 @@ function VoiceSettings(props: {onClose: () => void}) {
       {kind: "section", title: "BEHAVIOR"},
       {
         kind: "item", id: "reset", label: "Reset to defaults",
-        description: "0.4 s pause, 4 s maximum, -35 dB threshold, no gain, automatic microphone.",
+        description: "1.5 s pause, 60 s maximum, -35 dB threshold, no gain, automatic microphone.",
         value: () => "Restore",
         activate: resetDefaults,
       },

@@ -9,6 +9,7 @@ import base64
 from contextlib import contextmanager
 import fcntl
 import glob
+import io
 import json
 import os
 from pathlib import Path
@@ -21,6 +22,7 @@ import sys
 import tempfile
 import threading
 import time
+import traceback
 import wave
 
 SERVICE = Path(os.environ.get('TUI_VOICE_SERVICE', str(Path.home() / 'repos/fire-tv-next/lulu-launcher/service')))
@@ -36,6 +38,28 @@ TTS_THREADS = int(os.environ.get('TUI_VOICE_TTS_THREADS', '8'))
 POWERSHELL = '/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe'
 CMD = '/mnt/c/Windows/System32/cmd.exe'
 _current = None
+_cold_voice = None
+
+LOG_DIR = Path(os.environ.get('TUI_VOICE_LOG_DIR') or
+               (Path(os.environ.get('XDG_STATE_HOME') or (Path.home() / '.local/state')) / 'tui-voice'))
+LOG_FILE = LOG_DIR / 'voice.log'
+LOG_LIMIT = 1_000_000
+ASR_CHUNK_SECONDS = 28.0
+
+
+def log_event(level, message, **fields):
+    """Append one JSON line to the local voice log. Logging never breaks a turn."""
+    try:
+        LOG_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
+        if LOG_FILE.is_file() and LOG_FILE.stat().st_size > LOG_LIMIT:
+            os.replace(LOG_FILE, LOG_FILE.with_name('voice.log.1'))
+        record = {'time': time.strftime('%Y-%m-%dT%H:%M:%S%z'), 'pid': os.getpid(),
+                  'level': level, 'message': str(message)}
+        record.update({key: value for key, value in fields.items() if value is not None})
+        with open(LOG_FILE, 'a', encoding='utf-8') as handle:
+            handle.write(json.dumps(record, ensure_ascii=False) + '\n')
+    except (OSError, ValueError, TypeError):
+        pass
 
 
 def output(payload, code=0):
@@ -43,7 +67,8 @@ def output(payload, code=0):
     raise SystemExit(code)
 
 
-def fail(message):
+def fail(message, **fields):
+    log_event('error', message, **fields)
     output({'ok': False, 'error': str(message)}, 1)
 
 
@@ -219,8 +244,12 @@ def record(seconds, path=None, mic=None, silence=1.5, threshold=-35, gain=0):
             except OSError:
                 pass
 
+    tail = []
+
     def read_levels():
         for line in process.stderr:
+            tail.append(line.rstrip())
+            del tail[:-40]
             match = re.search(r'silence_start:\s*([0-9.]+)', line)
             if match:
                 at = float(match.group(1))
@@ -251,7 +280,8 @@ def record(seconds, path=None, mic=None, silence=1.5, threshold=-35, gain=0):
     reader.join(timeout=1)
     _current = None
     if not path.is_file() or path.stat().st_size <= 44:
-        fail('Microphone capture failed: ffmpeg returned no audio')
+        fail('Microphone capture failed: ffmpeg returned no audio',
+             device=device, detail='\n'.join(tail[-20:]))
     rms = 0.0
     peak = 0
     try:
@@ -263,6 +293,8 @@ def record(seconds, path=None, mic=None, silence=1.5, threshold=-35, gain=0):
             peak = max(abs(value) for value in samples)
     except (wave.Error, OSError):
         pass
+    log_event('info', 'recorded', path=str(path), device=device, seconds=seconds,
+              bytes=path.stat().st_size, rms=round(rms, 1))
     return {'ok': True, 'path': str(path), 'windows_path': windows_path,
             'device': device, 'devices': names, 'seconds': seconds,
             'silence': silence, 'threshold': threshold, 'gain': gain,
@@ -273,6 +305,14 @@ def voice():
     sys.path.insert(0, str(SERVICE))
     from web_voice import WebVoice
     return WebVoice()
+
+
+def cold_voice():
+    """Reuse one cold WebVoice so a chunked turn does not reload the stack."""
+    global _cold_voice
+    if _cold_voice is None:
+        _cold_voice = voice()
+    return _cold_voice
 
 
 def runtime_base():
@@ -330,11 +370,13 @@ def worker_request(path, request, timeout=180, quiet=False):
     except (OSError, ValueError, ConnectionError) as error:
         if not quiet:
             print(f'Warm worker unavailable at {path} ({error}); using cold path', file=sys.stderr)
+            log_event('warning', 'warm worker unavailable', socket=str(path), detail=str(error))
         return None
     if not isinstance(response, dict) or response.get('ok') is not True:
         detail = response.get('error') if isinstance(response, dict) else 'malformed response'
         if not quiet:
             print(f'Warm worker rejected request ({detail}); using cold path', file=sys.stderr)
+            log_event('warning', 'warm worker rejected request', socket=str(path), detail=str(detail))
         return None
     result = response.get('result')
     return result if isinstance(result, dict) else None
@@ -388,8 +430,10 @@ def start_worker(kind, idle_seconds=None):
         python = ASR_PYTHON if kind == 'asr' else TTS_PYTHON
         script = ASR_WORKER if kind == 'asr' else TTS_WORKER
         if not python.is_file():
+            log_event('error', f'missing {kind} worker Python', path=str(python))
             return {'ok': False, 'error': f'Missing {kind} worker Python: {python}'}
         if not script.is_file():
+            log_event('error', f'missing {kind} worker script', path=str(script))
             return {'ok': False, 'error': f'Missing {kind} worker script: {script}'}
         idle = WARM_IDLE if idle_seconds is None else max(0, int(idle_seconds))
         threads = ASR_THREADS if kind == 'asr' else TTS_THREADS
@@ -398,11 +442,15 @@ def start_worker(kind, idle_seconds=None):
         try:
             completed = subprocess.run(command, capture_output=True, text=True, timeout=45)
         except (OSError, subprocess.TimeoutExpired) as error:
+            log_event('error', f'{kind} worker start failed', detail=str(error))
             return {'ok': False, 'error': f'{kind} worker start failed: {error}'}
         if completed.returncode != 0:
             detail = (completed.stderr or completed.stdout or '').strip()[-400:]
+            log_event('error', f'{kind} worker start failed', detail=detail)
             return {'ok': False, 'error': f'{kind} worker start failed: {detail}'}
         running = worker_request(path, {'operation': 'status'}, timeout=3, quiet=True) is not None
+        if not running:
+            log_event('error', f'{kind} worker did not answer after start', socket=str(path))
         return {'ok': running, 'state': 'started' if running else 'not running',
                 'socket': str(path), 'output': (completed.stdout or '').strip()[-200:]}
 
@@ -421,25 +469,128 @@ def stop_worker(kind):
     return {'ok': stopped, 'stopping': stopped, 'socket': str(path)}
 
 
+def _encode_wav(payload, channels, width, rate):
+    buffer = io.BytesIO()
+    with wave.open(buffer, 'wb') as wav:
+        wav.setnchannels(channels)
+        wav.setsampwidth(width)
+        wav.setframerate(rate)
+        wav.writeframes(payload)
+    return base64.b64encode(buffer.getvalue()).decode('ascii')
+
+
+def _quietest_cut(raw, channels, width, rate, start_frame, end_frame):
+    """Pick a low-energy point near the end so a chunk does not split a word."""
+    if width != 2 or channels not in (1, 2):
+        return end_frame
+    frame_size = width * channels
+    window = max(1, int(0.04 * rate))
+    step = max(1, int(0.02 * rate))
+    position = max(start_frame, end_frame - int(5 * rate))
+    best = end_frame
+    best_level = None
+    while position + window <= end_frame:
+        offset = position * frame_size
+        samples = struct.unpack('<%dh' % (window * channels),
+                                raw[offset:offset + window * frame_size])
+        level = sum(sample * sample for sample in samples) / len(samples)
+        if best_level is None or level < best_level:
+            best_level = level
+            best = position + window
+        position += step
+    if best_level is None or best < start_frame + int(0.5 * rate):
+        return end_frame
+    return best
+
+
+def wav_chunks(path, limit=ASR_CHUNK_SECONDS):
+    """Split a long recording into ASR-sized WAV chunks under the 32 s budget."""
+    with wave.open(str(path), 'rb') as wav:
+        channels = wav.getnchannels()
+        width = wav.getsampwidth()
+        rate = wav.getframerate()
+        frames = wav.getnframes()
+        duration = frames / float(rate) if rate else 0.0
+        raw = wav.readframes(frames)
+    if duration <= limit:
+        yield base64.b64encode(path.read_bytes()).decode('ascii'), duration
+        return
+    frame_size = max(1, channels * width)
+    block = max(1, int(limit * rate))
+    position = 0
+    while position < frames:
+        end = min(frames, position + block)
+        if end < frames:
+            end = _quietest_cut(raw, channels, width, rate, position, end)
+            if end <= position:
+                end = min(frames, position + block)
+        payload = raw[position * frame_size:end * frame_size]
+        if payload:
+            yield _encode_wav(payload, channels, width, rate), (end - position) / float(rate)
+        position = end
+
+
 def transcribe(path):
     path = Path(path)
     if not path.is_file() or path.stat().st_size <= 44:
-        fail('The recording is missing or empty')
+        fail('The recording is missing or empty', path=str(path))
     temporary = path.parent == windows_temp()
-    data = base64.b64encode(path.read_bytes()).decode('ascii')
+    started = time.monotonic()
     try:
-        result = warm_transcribe(data)
-        if result is None:
-            result = voice().transcribe(data)
+        try:
+            parts = list(wav_chunks(path))
+        except (wave.Error, OSError) as error:
+            fail('Could not read the recording: ' + str(error), path=str(path))
+        texts = []
+        confidences = []
+        engine = ''
+        warm_chunks = 0
+        for index, (encoded, duration) in enumerate(parts):
+            try:
+                result = warm_transcribe(encoded)
+                if result is not None:
+                    warm_chunks += 1
+                else:
+                    result = cold_voice().transcribe(encoded)
+                if not result:
+                    raise ValueError('Local dictation returned no usable result')
+            except Exception as error:
+                log_event('error', 'transcription chunk failed', path=str(path),
+                          chunk=index + 1, chunks=len(parts), seconds=round(duration, 2),
+                          detail=traceback.format_exc()[-3000:])
+                raise
+            text = str(result.get('text') or '').strip()
+            if text:
+                texts.append(text)
+            confidence = result.get('confidence')
+            if isinstance(confidence, (int, float)) and confidence > 0:
+                confidences.append(float(confidence))
+            engine = engine or str(result.get('engine') or 'local ASR')
+        merged = {
+            'text': ' '.join(texts),
+            'confidence': round(sum(confidences) / len(confidences), 4) if confidences else 0,
+            'confidence_kind': 'Whisper mean word probability; heuristic, not calibrated accuracy',
+            'engine': engine or 'local ASR',
+            'raw_audio_retained': False,
+        }
+        log_event('info', 'transcribed', path=str(path), chunks=len(parts),
+                  warm_chunks=warm_chunks,
+                  seconds=round(sum(duration for _, duration in parts), 2),
+                  elapsed=round(time.monotonic() - started, 2),
+                  characters=len(merged['text']))
+        if len(parts) > 1:
+            merged['chunks'] = len(parts)
+        return {'ok': True, **merged}
+    except SystemExit:
+        raise
     except Exception as error:
-        fail('Local transcription failed: ' + str(error))
+        fail('Local transcription failed: ' + str(error), detail=traceback.format_exc()[-4000:])
     finally:
         if temporary:
             try:
                 path.unlink()
             except OSError:
                 pass
-    return {'ok': True, **result}
 
 
 def play(path):
@@ -582,4 +733,5 @@ if __name__ == '__main__':
     except SystemExit:
         raise
     except Exception as error:
+        log_event('error', 'voice helper crashed', detail=traceback.format_exc()[-4000:])
         fail(error)

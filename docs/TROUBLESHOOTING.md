@@ -34,6 +34,21 @@ Do not move it to the composer, a dialog, or an overlay.
 5. Confirm the local service still has the Whisper model and Python environment:
    `~/repos/fire-tv-next/lulu-launcher/service`.
 
+## "Audio duration outside finite budget"
+
+This was a helper bug for turns longer than the ASR 32 s limit. The helper now
+splits long recordings into chunks under 28 s, cuts at a quiet point, and joins the
+text. A 60 s turn is three chunks. If it appears again, the TUI is running an older
+plugin generation; close and reopen it.
+
+## Where errors are logged
+
+The plugin and `voice_helper.py` append JSON lines to
+`~/.local/state/tui-voice/voice.log` (one backup at `voice.log.1`). Include the last
+entries when reporting a failure. The log contains recording paths and error
+details, never audio or cloud data. Override the directory with
+`TUI_VOICE_LOG_DIR`.
+
 ## It waits too long
 
 - Keep **Maximum turn** long. Normal turns end on a pause; the maximum is a safety stop.

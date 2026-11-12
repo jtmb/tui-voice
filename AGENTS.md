@@ -45,6 +45,7 @@ all product/UI names here are `tui-voice` / `tui.voice`.
 | Warm TTS Python | `.../voice/.venv/bin/python` (override `TUI_VOICE_TTS_PYTHON`) |
 | Windows ffmpeg | WinGet Gyan.FFmpeg, auto-discovered (override `TUI_VOICE_FFMPEG`) |
 | Microphone | Automatic; override `TUI_VOICE_MIC` |
+| Error log | `~/.local/state/tui-voice/voice.log` (override `TUI_VOICE_LOG_DIR`) |
 | Platform | WSL2 + Windows microphone/speakers |
 
 Services do not auto-start. The plugin needs the voice service's Python/models and

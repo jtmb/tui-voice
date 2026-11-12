@@ -55,8 +55,10 @@ voice_helper.py record
         │
         ▼
 voice_helper.py transcribe
+  split above 28 s and cut at a quiet point, keeping each chunk under 32 s
   warm AF_UNIX request → Whisper base.en
   cold service fallback if the worker is absent
+  join chunk text in order
         │
         ▼
 queueDraft / flushPending
@@ -163,6 +165,21 @@ footer with keyboard hints. It is not a full-screen route.
 | TTS socket | `$XDG_RUNTIME_DIR/tui-voice/tts.sock` | `TUI_VOICE_TTS_SOCKET` |
 | Windows ffmpeg | WinGet Gyan.FFmpeg auto-discovery | `TUI_VOICE_FFMPEG` |
 | Microphone | automatic real-input selection | `TUI_VOICE_MIC` |
+| Error log directory | `~/.local/state/tui-voice` | `TUI_VOICE_LOG_DIR` |
 
 The paths are local. The plugin does not use the Fire TV app, ADB, or the Control
 Center API.
+
+## Error log
+
+Both the plugin and the helper append JSON lines to
+`~/.local/state/tui-voice/voice.log` (`$XDG_STATE_HOME` respected). The file rolls
+to `voice.log.1` at 1 MB. Logged fields include the time, PID, level, message,
+recording path, chunk counts, and a bounded traceback for helper failures.
+`TUI_VOICE_LOG_DIR` overrides the directory.
+
+Typical entries:
+
+- `recorded` — capture result, device, bytes, RMS.
+- `transcribed` — chunks, warm/cold count, duration, elapsed, characters.
+- `error` — helper crash, chunk failure, worker start failure, plugin catch.

@@ -113,7 +113,8 @@ voice_helper.py record
         │
         ▼
 voice_helper.py transcribe
-  warm Whisper worker → text (cold service fallback)
+  long turns split under 28 s, then warm Whisper worker
+  text joined in order (cold service fallback)
         │
         ▼
 message box draft (never auto-sent)
@@ -174,6 +175,9 @@ before the next dictation or reply.
 - **No transcript** — run **Test microphone**, check the selected input, then raise
   gain or pause duration. Dictation works from home and `/new`; if it still
   refuses, restart the TUI to load the current plugin.
+- **Something failed** — failures are appended to
+  `~/.local/state/tui-voice/voice.log` with the recording path and traceback.
+  Include the last entries in a bug report. No audio or cloud data is logged.
 - **Always waits to the maximum** — room noise is above the silence threshold;
   raise the threshold toward −25 dB.
 - **Read-aloud is silent** — check for `🔇` in the footer, enable it in
