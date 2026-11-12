@@ -1,5 +1,16 @@
 # tui-voice handoff
 
+## 2026-11-11 EST — compact footer panel
+
+- Replaced the two separated footer buttons with one compact one-row chip using
+  the active dialog surface: half-block pill ends, mic + status circle, a muted
+  `│` divider, then the speaker. Fixed widths keep the prompt from shifting.
+- State styling: amber-tinted mic segment while listening, cyan while
+  transcribing, red on error; the speaker segment recesses to the base background
+  when read-aloud is muted.
+- Verified in a fresh TUI: `▐ 🎙○ │🔊 ▌`, `▐ 🎙● │🔊 ▌`, and `▐ 🎙○ │🔇 ▌`
+  all occupy the same columns.
+
 ## 2026-11-11 EST — persistent warm ASR and TTS workers
 
 - Added `tts_worker.py`: one Kokoro `v1.0.int8` ONNX session stays loaded and

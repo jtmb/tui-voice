@@ -9,8 +9,13 @@ requirements remain.
 - The `🎙` microphone icon button lives in the **bottom footer** of a chat session.
 - Do not move it to the composer, a floating overlay, a full-screen route, or a
   different corner.
+- It must visibly change state while listening/transcribing: `○` idle, amber `●`
+  listening, cyan `◐` transcribing, `✕` error. Do not leave it visually idle.
 - The `🔊` / `🔇` button sits next to Voice in the same bottom footer.
   It toggles read-aloud and immediately stops current playback. Do not move it.
+- Microphone and speaker share **one compact one-row panel**: microphone + status
+  circle, a subtle divider, then speaker. Keep fixed cell widths so the prompt does
+  not shift between states. It is a chip, not a big box.
 - The settings screen is a **native-sized OpenCode dialog** (`large`, centered),
   not a full-screen page, and uses the active theme's dialog surface and native
   selected-row colors.

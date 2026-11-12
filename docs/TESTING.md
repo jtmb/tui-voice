@@ -57,8 +57,10 @@ Close the current TUI completely and start a new one from outside the repository
 (`cd ~`). `/reload` is not enough after a plugin path change.
 
 1. `opencode plugin list` includes `/home/brajam/repos/tui-voice`.
-2. Open a chat session. The bottom footer shows `🎙` microphone icon.
-3. Press `Ctrl+Alt+V`. It changes to `Listening`; a helper `record` process starts.
+2. Open a chat session. The bottom footer shows one compact panel:
+   `🎙○` and a speaker separated by a divider.
+3. Press `Ctrl+Alt+V`. The status circle turns amber `●` and the mic segment
+   tints; a helper `record` process starts. The panel does not move or resize.
 4. Wait for silence / the maximum. It changes to `Transcribing`, then a transcript
    appears in the message box. Nothing is sent.
 5. Press `Ctrl+Alt+S`. A centered native-sized settings dialog opens; arrows change

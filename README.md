@@ -15,7 +15,7 @@ No cloud service, no TV, no Control Center login.
 - **Works during a reply** — transcribes immediately and queues the draft until
   the message box returns.
 - **Read-aloud** — speaks completed assistant replies through Windows speakers.
-- **Reply sound** — a speaker icon in the footer stops current playback and toggles
+- **Reply sound** — the speaker segment of the same footer panel stops current playback and toggles
   reply read-aloud without opening settings. Unmuting resumes the interrupted reply
   from the current local speech chunk.
 - **Settings dialog** — tune timing, microphone, gain, silence threshold, voice;
@@ -54,11 +54,11 @@ Open a chat session and use the bottom footer button or a shortcut:
 
 | Action | Control |
 | --- | --- |
-| Dictate | `🎙` microphone icon in the bottom footer; its status circle changes: `○` idle, amber `●` listening, cyan `◐` transcribing, `✕` error |
+| Dictate | `🎙` microphone icon in a compact footer panel; its status circle changes: `○` idle, amber `●` listening, cyan `◐` transcribing, `✕` error |
 | Dictate | `Ctrl+Alt+V` |
 | Dictate | `F9` |
 | Dictate | `/dictate` |
-| Reply sound | `🔊` / `🔇` speaker button in the footer |
+| Reply sound | `🔊` / `🔇` speaker segment in the footer panel |
 | Reply sound | `Ctrl+Alt+M` or `F10` |
 | Settings | `Ctrl+Alt+S` |
 | Settings | Command palette → **Voice: Settings** |
