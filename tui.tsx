@@ -568,8 +568,14 @@ function VoiceButton(props: {sessionID?: string}) {
       lastSession = props.sessionID
     }
   })
+  const micBackground = () =>
+    phase() === "listening" ? "#f4b65f"
+      : phase() === "transcribing" ? "#99e7ff"
+      : phase() === "error" ? "#fa9e95"
+      : undefined
   return (
-    <text fg={phaseColor()} onMouseDown={activate} onMouseUp={activate}>🎙</text>
+    <text fg={active() ? "#101112" : phaseColor()} bg={micBackground()}
+      onMouseDown={activate} onMouseUp={activate}>{"🎙\uFE0E"}</text>
   )
 }
 
