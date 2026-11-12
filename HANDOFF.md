@@ -3,13 +3,14 @@
 ## 2026-11-11 EST — compact footer panel
 
 - Replaced the two separated footer buttons with one compact one-row chip using
-  the active dialog surface: half-block pill ends, mic + status circle, a muted
-  `│` divider, then the speaker. Fixed widths keep the prompt from shifting.
-- State styling: amber-tinted mic segment while listening, cyan while
-  transcribing, red on error; the speaker segment recesses to the base background
-  when read-aloud is muted.
-- Verified in a fresh TUI: `▐ 🎙○ │🔊 ▌`, `▐ 🎙● │🔊 ▌`, and `▐ 🎙○ │🔇 ▌`
-  all occupy the same columns.
+  the active dialog surface: mic + status circle, a recessed `│` divider, then the
+  speaker. Fixed widths keep the prompt from shifting.
+- State styling is the status circle only: blue `○` idle, amber `●` listening,
+  cyan `◐` transcribing, red `✕` error. No tinted block or edge glyphs.
+- The footer chip hides while the settings dialog is open, because the dialog
+  overlay covered the speaker and left a broken-looking half-panel.
+- Verified in a fresh TUI: `🎙○│🔊`, `🎙●│🔊`, and `🎙○│🔇` all occupy the
+  same columns.
 
 ## 2026-11-11 EST — persistent warm ASR and TTS workers
 

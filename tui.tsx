@@ -16,6 +16,7 @@ type Settings = { mic: string; voice: string; seconds: number; silence: number; 
 
 const [active, setActive] = createSignal(false)
 const [phase, setPhase] = createSignal<Phase>("idle")
+const [settingsOpen, setSettingsOpen] = createSignal(false)
 let settings: Settings = { mic: "", voice: "heart", seconds: 4, silence: 0.4, threshold: -35, gain: 0, readAloud: true }
 let updateSettings: ((mutation: (draft: Settings) => void) => Promise<void>) | undefined
 let child: ChildProcess | null = null
@@ -610,11 +611,14 @@ function VoiceSettings(props: {onClose: () => void}) {
 }
 
 function openSettings(context: any) {
+  setSettingsOpen(true)
   context.ui.dialog.set({size: "large", centered: true})
-  context.ui.dialog.show(() => <VoiceSettings onClose={() => context.ui.dialog.clear()} />)
+  context.ui.dialog.show(() => (
+    <VoiceSettings onClose={() => { setSettingsOpen(false); context.ui.dialog.clear() }} />
+  ))
 }
 
-function VoiceButton(props: {sessionID?: string; theme: any; panel: any}) {
+function VoiceButton(props: {sessionID?: string; panel: any}) {
   let lastAction = 0
   const activate = () => {
     const now = Date.now()
@@ -633,13 +637,8 @@ function VoiceButton(props: {sessionID?: string; theme: any; panel: any}) {
       : phase() === "transcribing" ? {glyph: "◐", color: "#99e7ff"}
       : phase() === "error" ? {glyph: "✕", color: "#fa9e95"}
       : {glyph: "○", color: "#3ca9e8"}
-  const tint = () =>
-    phase() === "listening" ? props.theme.hue?.orange?.["800"]
-      : phase() === "transcribing" ? props.theme.hue?.cyan?.["800"]
-      : phase() === "error" ? props.theme.hue?.red?.["800"]
-      : undefined
   return (
-    <box flexDirection="row" width={3} backgroundColor={tint() || props.panel}
+    <box flexDirection="row" backgroundColor={props.panel}
       onMouseDown={activate} onMouseUp={activate}>
       <text onMouseDown={activate} onMouseUp={activate}>🎙</text>
       <text fg={indicator().color} onMouseDown={activate} onMouseUp={activate}>
@@ -649,7 +648,7 @@ function VoiceButton(props: {sessionID?: string; theme: any; panel: any}) {
   )
 }
 
-function MuteButton(props: {theme: any; panel: any}) {
+function MuteButton(props: {panel: any}) {
   let lastAction = 0
   const activate = () => {
     const now = Date.now()
@@ -658,8 +657,7 @@ function MuteButton(props: {theme: any; panel: any}) {
     onMute()
   }
   return (
-    <box flexDirection="row" width={2}
-      backgroundColor={readAloudEnabled() ? props.panel : props.theme.background?.raised?.base}
+    <box flexDirection="row" backgroundColor={props.panel}
       onMouseDown={activate} onMouseUp={activate}>
       <text onMouseDown={activate} onMouseUp={activate}>
         {readAloudEnabled() ? "🔊" : "🔇"}
@@ -700,19 +698,15 @@ export default Plugin.define({
     const offFooter = context.ui.slot({
       append: "prompt.footer",
       render: input => {
+        if (settingsOpen()) return <box height={1} />
         const theme = context.theme.surface("dialog")
         const panel = theme.background?.raised?.max
         return (
-          <box flexDirection="row" height={1}>
-            <text fg={panel}>▐</text>
-            <box flexDirection="row" height={1} backgroundColor={panel}>
-              <text> </text>
-              <VoiceButton sessionID={input.sessionID} theme={theme} panel={panel} />
-              <text fg={theme.text.muted}>│</text>
-              <MuteButton theme={theme} panel={panel} />
-              <text> </text>
-            </box>
-            <text fg={panel}>▌</text>
+          <box flexDirection="row" height={1} backgroundColor={panel}
+            paddingLeft={1} paddingRight={1}>
+            <VoiceButton sessionID={input.sessionID} panel={panel} />
+            <text fg={theme.background?.raised?.base}>│</text>
+            <MuteButton panel={panel} />
           </box>
         )
       },

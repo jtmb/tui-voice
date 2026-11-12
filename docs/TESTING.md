@@ -63,8 +63,9 @@ Close the current TUI completely and start a new one from outside the repository
    tints; a helper `record` process starts. The panel does not move or resize.
 4. Wait for silence / the maximum. It changes to `Transcribing`, then a transcript
    appears in the message box. Nothing is sent.
-5. Press `Ctrl+Alt+S`. A centered native-sized settings dialog opens; arrows change
-   values; `Esc` closes.
+5. Press `Ctrl+Alt+S`. A centered native-sized settings dialog opens; the footer
+   chip hides cleanly behind the modal, and returns when `Esc` closes it. Arrows
+   change values.
 6. With read-aloud On, send a short prompt in a disposable session and confirm a
    `voice_helper.py say` process starts with the completed assistant text.
 7. Open settings, run **Test read-aloud**, then toggle footer `🔊` → `🔇`; the
@@ -77,6 +78,8 @@ Close the current TUI completely and start a new one from outside the repository
 ## Verified evidence
 
 - Fixture transcript inserted into the message box without sending.
+- Footer chip verified at 80, 100, and 140 columns: `🎙○│🔊`, `🎙●│🔊`, and
+  `🎙○│🔇` keep identical cell widths and columns; no clipping or layout shift.
 - Warm ASR returned the same fixture transcript in ~0.6 s (cold ~1.5 s); the TTS
   worker kept one ONNX session and served repeated chunks (warm ~1.1 s vs cold
   ~3.2 s for the same short sentence, 8 threads).
