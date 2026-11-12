@@ -50,5 +50,5 @@ microphone you speak into.
 | `Esc` | Close the dialog |
 
 Changes apply to the next dictation turn. There is no separate Save button. The
-footer `🔊 Replies` / `🔇 Replies` button toggles read-aloud and stops current playback
+footer `🔊` / `🔇` button toggles read-aloud and stops current playback
 without opening settings.
