@@ -347,8 +347,11 @@ function VoiceSettings(props: {data?: {sessionID?: string}}) {
       draft.silence = 0.4
       draft.threshold = -35
       draft.gain = 0
+      draft.readAloud = true
+      draft.voice = "heart"
     })
-    setTestStatus("Defaults restored.")
+    setTestStatus("")
+    toast(context, "Defaults restored.", "success")
     setSelected(1)
   }
 
