@@ -574,8 +574,8 @@ function VoiceButton(props: {sessionID?: string}) {
       : phase() === "error" ? {glyph: "✕", color: "#fa9e95"}
       : {glyph: "○", color: "#3ca9e8"}
   return (
-    <box flexDirection="row" onMouseDown={activate} onMouseUp={activate}>
-      <text onMouseDown={activate} onMouseUp={activate}>{"🎙\uFE0E"}</text>
+    <box flexDirection="row" width={3} onMouseDown={activate} onMouseUp={activate}>
+      <text onMouseDown={activate} onMouseUp={activate}>🎙</text>
       <text fg={indicator().color} onMouseDown={activate} onMouseUp={activate}>
         {indicator().glyph}
       </text>
@@ -592,9 +592,12 @@ function MuteButton() {
     onMute()
   }
   return (
-    <text onMouseDown={activate} onMouseUp={activate}>
-      {readAloudEnabled() ? "🔊" : "🔇"}
-    </text>
+    <box flexDirection="row" width={3} onMouseDown={activate} onMouseUp={activate}>
+      <text onMouseDown={activate} onMouseUp={activate}>
+        {readAloudEnabled() ? "🔊" : "🔇"}
+      </text>
+      <box width={1} />
+    </box>
   )
 }
 
