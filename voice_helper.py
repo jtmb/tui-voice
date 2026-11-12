@@ -316,15 +316,24 @@ def chunks(text, limit=900):
     return [chunk for chunk in result if chunk]
 
 
-def say(text, voice_id='heart', should_play=True):
+def say(text, voice_id='heart', should_play=True, start_chunk=0, progress_file=None):
     text = str(text or '').strip()
     if not text:
         fail('Nothing to speak')
     engine = voice()
     directory = windows_temp()
     spoken = 0
+    parts = chunks(text)
+    start_chunk = max(0, int(start_chunk or 0))
     try:
-        for index, chunk in enumerate(chunks(text)):
+        for index, chunk in enumerate(parts):
+            if index < start_chunk:
+                continue
+            if progress_file:
+                try:
+                    Path(progress_file).write_text(json.dumps({'chunk': index, 'chunks': len(parts)}))
+                except OSError:
+                    pass
             result = engine.speak(chunk, voice_id)
             path = directory / ('tui-voice-reply-' + str(os.getpid()) + '-' + str(index) + '.wav')
             path.write_bytes(base64.b64decode(result['wav']))
@@ -337,7 +346,8 @@ def say(text, voice_id='heart', should_play=True):
                 pass
     except Exception as error:
         fail('Local speech failed: ' + str(error))
-    return {'ok': True, 'voice': voice_id, 'chunks': spoken, 'played': bool(should_play)}
+    return {'ok': True, 'voice': voice_id, 'chunks': spoken, 'played': bool(should_play),
+            'start': start_chunk, 'total': len(parts)}
 
 
 def main():
@@ -363,6 +373,8 @@ def main():
     say_parser.add_argument('--text', required=True)
     say_parser.add_argument('--voice', default='heart')
     say_parser.add_argument('--no-play', action='store_true')
+    say_parser.add_argument('--start-chunk', type=int, default=0)
+    say_parser.add_argument('--progress-file')
 
     args = parser.parse_args()
     if args.command == 'devices':
@@ -376,7 +388,7 @@ def main():
     elif args.command == 'play':
         output(play(args.wav))
     elif args.command == 'say':
-        output(say(args.text, args.voice, not args.no_play))
+        output(say(args.text, args.voice, not args.no_play, args.start_chunk, args.progress_file))
 
 
 if __name__ == '__main__':

@@ -39,8 +39,9 @@ Close the current TUI completely and start a new one from outside the repository
    values; `Esc` closes.
 6. With read-aloud On, send a short prompt in a disposable session and confirm a
    `voice_helper.py say` process starts with the completed assistant text.
-7. Toggle footer `🔊`; it becomes `🔇` and any current `say` process
-   stops. Send a prompt and confirm no speech. Toggle back to `🔊`.
+7. Open settings, run **Test read-aloud**, then toggle footer `🔊` → `🔇`; the
+   current `say` process stops. Toggle back to `🔊`; a new `say` process starts
+   with `--start-chunk` and the interrupted sample continues.
 8. Set read-aloud Off in settings, send another prompt, and confirm no `say`
    process starts.
 9. Stop dictation and confirm no `voice_helper.py` process remains.

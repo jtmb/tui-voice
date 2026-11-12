@@ -79,8 +79,11 @@ speechQueue → voice_helper.py say
 - Only completed assistant text for the currently open session is spoken.
 - The speech queue serializes replies and waits while a dictation turn is active.
 - Read-aloud can be turned off in settings or by the footer `🔊` / `🔇`
-  button. Muting stops the active helper `say` process immediately. The voice is
+  button. Muting stops the active helper `say` process immediately and records the
+  current speech chunk; unmuting resumes with `say --start-chunk N`. The voice is
   selectable (Heart, Velvet, English Rose, Dora).
+- `voice_helper.py say` writes `tui-voice-speech.json` before each chunk so the
+  plugin can resume the interrupted position.
 - Read-aloud and dictation both use the same local models; no cloud request is
   made.
 

@@ -16,6 +16,7 @@ native-sized (`large`), themed by the active OpenCode theme, and closes with
 | Test microphone | — | action | Records 2 s and shows RMS/peak |
 | Read replies aloud | On | On/Off | Local Kokoro read-back; footer speaker Replies control toggles this too |
 | Read-aloud voice | Heart | Heart, Velvet, English Rose, Dora | Kokoro preset for read-back |
+| Test read-aloud | — | action | Plays a sample; mute/unmute resumes it |
 | Reset to defaults | — | action | Restores the defaults below |
 
 Defaults: **0.4 s**, **4 s**, automatic mic, **−35 dB**, **0 dB**, read-aloud

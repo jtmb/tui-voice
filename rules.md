@@ -61,5 +61,6 @@ requirements remain.
 - A test turn inserts the exact transcript and does not send.
 - A turn during a running reply queues and later inserts.
 - Settings dialog opens with `Ctrl+Alt+S`, uses the active theme, and values stick.
-- Read-aloud On produces local speech; Off produces none.
+- Read-aloud On produces local speech; Off produces none. Muting during speech
+  and unmuting resumes the interrupted reply.
 - Plugin survives a full TUI restart.

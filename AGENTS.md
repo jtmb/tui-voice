@@ -17,7 +17,8 @@ In particular:
   draft until the message box returns.
 - Read-aloud is a setting with an on/off switch and a local voice choice. A
   `🔊` / `🔇` footer button next to Voice toggles the same setting and
-  stops current playback; it must remain functional and local.
+  stops current playback; unmuting resumes the interrupted reply. It must remain
+  functional and local.
 - Voice settings use a native-sized OpenCode dialog with the active theme, not a
   custom full-screen route.
 - Load globally from `~/.config/opencode/cli.json`; survive a TUI restart.
@@ -96,8 +97,8 @@ plugin requires closing and reopening the TUI; `/reload` alone is not sufficient
 - A short spoken turn inserts text into the message box and does not send.
 - Dictation while a reply runs transcribes and inserts after the reply.
 - `Ctrl+Alt+S` opens a centered settings dialog; arrows change values; `Esc` closes.
-- Footer `🔊` / `🔇` (or `Ctrl+Alt+M`/`F10`) toggles read-aloud and stops
-  current playback.
+- Footer `🔊` / `🔇` (or `Ctrl+Alt+M`/`F10`) toggles read-aloud, stops current
+  playback, and resumes the interrupted reply on unmute.
 - Read-aloud On speaks a completed assistant reply; Off stays silent.
 - `voice_helper.py devices` lists the real Windows input (Focusrite before the
   virtual Steam microphone).

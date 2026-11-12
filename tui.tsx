@@ -1,12 +1,13 @@
 import { Plugin, usePlugin } from "@opencode/plugin/tui"
 import { createEffect, createSignal, For } from "solid-js"
 import { spawn, type ChildProcess } from "node:child_process"
-import { rmSync } from "node:fs"
+import { readFileSync, rmSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const HELPER = join(HERE, "voice_helper.py")
+const SPEECH_PROGRESS = "/tmp/opencode/tui-voice-speech.json"
 const PYTHON = process.env.TUI_VOICE_PYTHON
   || "/home/brajam/repos/fire-tv-next/lulu-launcher/service/.venv/bin/python"
 
@@ -22,6 +23,9 @@ let pendingDraft: {sessionID: string; text: string} | null = null
 let pendingFlush = false
 let speechQueue: Promise<void> = Promise.resolve()
 let speechChild: ChildProcess | null = null
+let speechState: {text: string; voice: string; startChunk: number} | null = null
+let interruptedSpeech: {text: string; voice: string; startChunk: number} | null = null
+let lastReadAloud: boolean | null = null
 let lastSession = ""
 let onToggle: () => void = () => {}
 let onMute: () => void = () => {}
@@ -219,19 +223,52 @@ async function toggleVoice(context: any) {
 
 async function toggleMute(context: any) {
   const currently = readAloudEnabled()
-  if (currently) stopSpeech()
   await saveSetting("readAloud", !currently)
   toast(context, currently ? "Read-aloud muted." : "Read-aloud on.", currently ? "info" : "success")
 }
 
-function speakReply(context: any, text: string) {
+function interruptSpeech() {
+  const state = speechState
+  if (state) {
+    let chunk = state.startChunk
+    try {
+      const progress = JSON.parse(readFileSync(SPEECH_PROGRESS, "utf8"))
+      if (Number.isInteger(progress?.chunk)) chunk = progress.chunk
+    } catch {}
+    interruptedSpeech = {...state, startChunk: chunk}
+  }
+  stopSpeech()
+  speechState = null
+}
+
+function resumeInterruptedSpeech(context: any) {
+  if (!readAloudEnabled() || !interruptedSpeech) return
+  const pending = interruptedSpeech
+  interruptedSpeech = null
+  speakReply(context, pending.text, {startChunk: pending.startChunk, voice: pending.voice})
+}
+
+function speakReply(context: any, text: string, options?: {startChunk?: number; voice?: string}) {
+  const startChunk = Math.max(0, options?.startChunk ?? 0)
+  const voice = options?.voice || settings.voice || "heart"
   speechQueue = speechQueue.then(async () => {
     if (!readAloudEnabled()) return
     while (active()) await delay(250)
+    try { rmSync(SPEECH_PROGRESS, {force: true}) } catch {}
+    const state = {text, voice, startChunk}
+    speechState = state
     try {
-      await helperPayload(["say", "--text", text, "--voice", settings.voice || "heart"], 240000,
-        process => { speechChild = process })
-    } catch {}
+      await helperPayload([
+        "say", "--text", text, "--voice", voice,
+        "--start-chunk", String(startChunk),
+        "--progress-file", SPEECH_PROGRESS,
+      ], 240000, process => { speechChild = process })
+      interruptedSpeech = null
+    } catch {
+      // A mute/interrupt keeps interruptedSpeech for resume.
+    } finally {
+      if (speechState === state) speechState = null
+    }
   }).catch(() => {})
 }
 
@@ -432,6 +469,18 @@ function VoiceSettings(props: {onClose: () => void}) {
         adjust: cycleVoice,
         activate: () => cycleVoice(1),
       },
+      {
+        kind: "item", id: "testSpeech", label: "Test read-aloud",
+        description: "Speaks a sample. Use the footer speaker button to mute and unmute; it resumes the sample.",
+        value: () => "Play sample",
+        activate: () => {
+          if (!readAloudEnabled()) {
+            setTestStatus("Enable Read replies aloud first.")
+            return
+          }
+          speakReply(context, "This is a local voice test. Read-aloud is speaking through the Windows speakers. Mute it with the speaker button, then unmute to resume.")
+        },
+      },
       {kind: "section", title: "BEHAVIOR"},
       {
         kind: "item", id: "reset", label: "Reset to defaults",
@@ -612,6 +661,15 @@ export default Plugin.define({
     onToggle = () => { void toggleVoice(context) }
     onMute = () => { void toggleMute(context) }
     context.ui.toast.show({title: "tui-voice", message: "Ready · F9 or Ctrl+Alt+V", variant: "info", duration: 3000})
+
+    createEffect(() => {
+      const enabled = readAloudEnabled()
+      if (lastReadAloud === null) { lastReadAloud = enabled; return }
+      if (enabled === lastReadAloud) return
+      lastReadAloud = enabled
+      if (enabled) resumeInterruptedSpeech(context)
+      else interruptSpeech()
+    })
 
     const stopText = context.data.on("session.text.ended", (event: any) => {
       const route = context.ui.router.current()
