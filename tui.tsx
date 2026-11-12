@@ -542,9 +542,9 @@ function VoiceButton(props: {sessionID?: string}) {
     }
   })
   return (
-    <box onMouseDown={() => onToggle()} paddingLeft={1} paddingRight={1}
+    <box onMouseUp={() => onToggle()} paddingLeft={2} paddingRight={2}
       backgroundColor={active() ? "#3a2d1e" : "#15384a"}>
-      <text fg={phaseColor()} onMouseDown={() => onToggle()}>◉ {active() ? phaseLabel() : "Voice"}</text>
+      <text fg={phaseColor()} onMouseUp={() => onToggle()}>◉ {active() ? phaseLabel() : "Voice"}</text>
     </box>
   )
 }
