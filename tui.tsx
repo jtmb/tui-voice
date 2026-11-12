@@ -640,7 +640,7 @@ function VoiceButton(props: {sessionID?: string; panel: any}) {
   return (
     <box flexDirection="row" backgroundColor={props.panel}
       onMouseDown={activate} onMouseUp={activate}>
-      <text onMouseDown={activate} onMouseUp={activate}>🎙</text>
+      <text onMouseDown={activate} onMouseUp={activate}>🎤</text>
       <text fg={indicator().color} onMouseDown={activate} onMouseUp={activate}>
         {indicator().glyph}
       </text>
@@ -702,11 +702,15 @@ export default Plugin.define({
         const theme = context.theme.surface("dialog")
         const panel = theme.background?.raised?.max
         return (
-          <box flexDirection="row" height={1} backgroundColor={panel}
-            paddingLeft={1} paddingRight={1}>
-            <VoiceButton sessionID={input.sessionID} panel={panel} />
-            <text fg={theme.background?.raised?.base}>│</text>
-            <MuteButton panel={panel} />
+          <box flexDirection="row" height={1}>
+            <text fg={panel}>▐</text>
+            <box flexDirection="row" height={1} backgroundColor={panel}
+              paddingLeft={1} paddingRight={1}>
+              <VoiceButton sessionID={input.sessionID} panel={panel} />
+              <text fg={theme.background?.raised?.base}>│</text>
+              <MuteButton panel={panel} />
+            </box>
+            <text fg={panel}>▌</text>
           </box>
         )
       },

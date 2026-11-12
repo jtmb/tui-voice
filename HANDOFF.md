@@ -2,14 +2,19 @@
 
 ## 2026-11-11 EST — compact footer panel
 
-- Replaced the two separated footer buttons with one compact one-row chip using
-  the active dialog surface: mic + status circle, a recessed `│` divider, then the
-  speaker. Fixed widths keep the prompt from shifting.
+- Replaced the two separated footer buttons with one compact one-row chip:
+  half-cell rounded caps, one cell of padding at each end, mic + status circle, a
+  recessed `│` divider, then the speaker. Fixed widths keep the prompt from
+  shifting.
+- Switched the microphone glyph to `🎤` because its left/right bearings are
+  symmetric; `🎙` carried a ~26% left bearing that made the end spacing look
+  uneven. With one cell of padding at each end and the half-cell caps, the visible
+  left/right gutters are within ~0.14 cell of each other.
 - State styling is the status circle only: blue `○` idle, amber `●` listening,
-  cyan `◐` transcribing, red `✕` error. No tinted block or edge glyphs.
+  cyan `◐` transcribing, red `✕` error. No tinted block.
 - The footer chip hides while the settings dialog is open, because the dialog
   overlay covered the speaker and left a broken-looking half-panel.
-- Verified in a fresh TUI: `🎙○│🔊`, `🎙●│🔊`, and `🎙○│🔇` all occupy the
+- Verified in a fresh TUI: `🎤○│🔊`, `🎤●│🔊`, and `🎤○│🔇` all occupy the
   same columns.
 
 ## 2026-11-11 EST — persistent warm ASR and TTS workers
@@ -46,7 +51,7 @@
 - The voice button is back in the **prompt footer** after the owner explicitly
   rejected moving it. It uses mouse-down/up with a debounce, is focusable, and
   keeps `Ctrl+Alt+V`, `F9`, and `/dictate` as keyboard paths. A fresh TUI from
-  outside the repo showed `🎙` microphone icon and `Ctrl+Alt+V` changed it to the Listening state.
+  outside the repo showed the microphone icon and `Ctrl+Alt+V` changed it to the Listening state.
 - `Ctrl+Alt+S` opens a **centered, native-sized (`large`) OpenCode dialog** using
   `theme.surface("dialog")`, dialog border/background, and native
   `background.action.primary.focused` / `text.action.primary.focused` selected-row

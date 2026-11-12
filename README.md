@@ -54,7 +54,7 @@ Open a chat session and use the bottom footer button or a shortcut:
 
 | Action | Control |
 | --- | --- |
-| Dictate | `🎙` microphone icon in a compact footer panel; its status circle changes: `○` idle, amber `●` listening, cyan `◐` transcribing, `✕` error |
+| Dictate | `🎤` microphone icon in a compact footer panel; its status circle changes: `○` idle, amber `●` listening, cyan `◐` transcribing, `✕` error |
 | Dictate | `Ctrl+Alt+V` |
 | Dictate | `F9` |
 | Dictate | `/dictate` |

@@ -24,7 +24,7 @@ list as well.
 
 `tui.tsx` exports a `Plugin.define` with id `tui.voice` and:
 
-- a `prompt.footer` slot containing one compact panel: `🎙` + status circle,
+- a `prompt.footer` slot containing one compact panel: `🎤` + status circle,
   a divider, and the speaker;
 - a command layer with `Ctrl+Alt+V`, `F9`, `/dictate`, settings (`Ctrl+Alt+S`),
   and microphone selection;
