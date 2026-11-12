@@ -18,7 +18,7 @@
 - Settings cover pause duration, maximum turn, input device, silence threshold,
   input gain, microphone test, read-aloud On/Off, read-aloud voice, and reset.
   Read-aloud defaults On; voices are Heart, Velvet, English Rose, Dora.
-- Added a footer `◉ Mute` / `◉ Unmute` button next to Voice, with `Ctrl+Alt+M`
+- Added a footer 🔊/🔇 Replies speaker button next to Voice, with `Ctrl+Alt+M`
   and `F10` bindings. It toggles the read-aloud setting and terminates the active
   `say` helper process; the settings row stays in sync.
 - Dictation no longer refuses while a reply is running. It records and transcribes

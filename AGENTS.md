@@ -16,7 +16,7 @@ In particular:
 - Recording works while a reply is running; transcribe immediately and queue the
   draft until the message box returns.
 - Read-aloud is a setting with an on/off switch and a local voice choice. A
-  `◉ Mute` / `◉ Unmute` footer button next to Voice toggles the same setting and
+  `🔊 Replies` / `🔇 Replies` footer button next to Voice toggles the same setting and
   stops current playback; it must remain functional and local.
 - Voice settings use a native-sized OpenCode dialog with the active theme, not a
   custom full-screen route.
@@ -96,7 +96,7 @@ plugin requires closing and reopening the TUI; `/reload` alone is not sufficient
 - A short spoken turn inserts text into the message box and does not send.
 - Dictation while a reply runs transcribes and inserts after the reply.
 - `Ctrl+Alt+S` opens a centered settings dialog; arrows change values; `Esc` closes.
-- Footer `◉ Mute` / `◉ Unmute` (or `Ctrl+Alt+M`/`F10`) toggles read-aloud and stops
+- Footer `🔊 Replies` / `🔇 Replies` (or `Ctrl+Alt+M`/`F10`) toggles read-aloud and stops
   current playback.
 - Read-aloud On speaks a completed assistant reply; Off stays silent.
 - `voice_helper.py devices` lists the real Windows input (Focusrite before the

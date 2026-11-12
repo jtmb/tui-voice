@@ -15,8 +15,8 @@ No cloud service, no TV, no Control Center login.
 - **Works during a reply** — transcribes immediately and queues the draft until
   the message box returns.
 - **Read-aloud** — speaks completed assistant replies through Windows speakers.
-- **Mute/unmute** — a footer button stops current playback and toggles read-aloud
-  without opening settings.
+- **Reply sound** — a speaker button in the footer stops current playback and toggles
+  reply read-aloud without opening settings. It is labeled 🔊/🔇 Replies, not mic mute.
 - **Settings dialog** — tune timing, microphone, gain, silence threshold, voice;
   test the mic without recording a prompt.
 - **Global** — loaded once from `~/.config/opencode/cli.json`, across all projects.
@@ -57,8 +57,8 @@ Open a chat session and use the bottom footer button or a shortcut:
 | Dictate | `Ctrl+Alt+V` |
 | Dictate | `F9` |
 | Dictate | `/dictate` |
-| Mute/unmute read-aloud | `◉ Mute` / `◉ Unmute` in the footer |
-| Mute/unmute read-aloud | `Ctrl+Alt+M` or `F10` |
+| Reply sound | `🔊 Replies` / `🔇 Replies` speaker button in the footer |
+| Reply sound | `Ctrl+Alt+M` or `F10` |
 | Settings | `Ctrl+Alt+S` |
 | Settings | Command palette → **Voice: Settings** |
 
@@ -82,7 +82,7 @@ theme. Keyboard: `↑↓` select, `←→` change, `Enter` choose, `Esc` close.
 | Silence threshold | −35 dB | Higher values (−25) treat more room noise as silence |
 | Input gain | Off | Boost a quiet mic; try 6–12 dB |
 | Test microphone | — | Records 2 s and reports RMS/peak |
-| Read replies aloud | On | Local Kokoro read-back; also toggled by the footer Mute/Unmute button |
+| Read replies aloud | On | Local Kokoro read-back; also toggled by the footer speaker Replies button |
 | Read-aloud voice | Heart | Heart, Velvet, English Rose, Dora |
 | Reset to defaults | — | Restores the values above |
 
@@ -157,7 +157,7 @@ The plugin depends on the existing local voice stack:
   gain or pause duration.
 - **Always waits to the maximum** — room noise is above the silence threshold;
   raise the threshold toward −25 dB.
-- **Read-aloud is silent** — check for `◉ Unmute` in the footer, enable it in
+- **Read-aloud is silent** — check for `🔇 Replies` in the footer, enable it in
   settings, select a voice, and check the Windows default output device.
 - **Theme looks wrong** — reopen the dialog after changing the TUI theme; the
   dialog uses `theme.surface("dialog")`.
@@ -181,8 +181,7 @@ After changes, reopen the TUI and run the fresh-TUI gate in
 ## Status
 
 Verified: fixture transcript inserted without sending; settings dialog and values;
-read-aloud helper spawned with the correct reply; footer Mute/Unmute toggles the
-same read-aloud setting; microphone test; global load from outside the repository.
+read-aloud helper spawned with the correct reply; footer 🔊/🔇 Replies control toggles the same read-aloud setting; microphone test; global load from outside the repository.
 
 Not verified: physical speech accuracy/latency, mouse-click activation of the
 footer button, and a physical dictation queued behind a live model turn. See

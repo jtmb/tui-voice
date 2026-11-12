@@ -593,7 +593,7 @@ function MuteButton() {
       backgroundColor={readAloudEnabled() ? "#15384a" : "#3a2d1e"}>
       <text fg={readAloudEnabled() ? "#3ca9e8" : "#f4b65f"}
         onMouseDown={activate} onMouseUp={activate}>
-        ◉ {readAloudEnabled() ? "Mute" : "Unmute"}
+        {readAloudEnabled() ? "🔊 Replies" : "🔇 Replies"}
       </text>
     </box>
   )
@@ -657,7 +657,7 @@ export default Plugin.define({
         },
         {
           id: "tui.voice.mute",
-          title: "Voice: Mute/unmute read-aloud",
+          title: "Voice: Toggle reply sound",
           group: "Voice",
           bind: "ctrl+alt+m",
           palette: true,
@@ -665,7 +665,7 @@ export default Plugin.define({
         },
         {
           id: "tui.voice.mute.alt",
-          title: "Voice: Mute/unmute read-aloud (F10)",
+          title: "Voice: Toggle reply sound (F10)",
           group: "Voice",
           bind: "f10",
           palette: false,

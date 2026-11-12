@@ -14,7 +14,7 @@ native-sized (`large`), themed by the active OpenCode theme, and closes with
 | Silence threshold | −35 dB | −25, −30, −35, −40, −45 | Noise floor for silence detection |
 | Input gain | Off | 0, 3, 6, 9, 12, 15, 18 dB | Boost a quiet input |
 | Test microphone | — | action | Records 2 s and shows RMS/peak |
-| Read replies aloud | On | On/Off | Local Kokoro read-back; footer Mute/Unmute toggles this too |
+| Read replies aloud | On | On/Off | Local Kokoro read-back; footer speaker Replies control toggles this too |
 | Read-aloud voice | Heart | Heart, Velvet, English Rose, Dora | Kokoro preset for read-back |
 | Reset to defaults | — | action | Restores the defaults below |
 
@@ -50,5 +50,5 @@ microphone you speak into.
 | `Esc` | Close the dialog |
 
 Changes apply to the next dictation turn. There is no separate Save button. The
-footer `◉ Mute` / `◉ Unmute` button toggles read-aloud and stops current playback
+footer `🔊 Replies` / `🔇 Replies` button toggles read-aloud and stops current playback
 without opening settings.
