@@ -51,6 +51,7 @@ requirements remain.
 ## Privacy and scope
 
 - Audio is local; temporary capture files are deleted after transcription.
+- Warm ASR/TTS workers are local AF_UNIX helpers; keep them local and optional.
 - No cloud service, TV, ADB, Control Center login, upload, or automatic prompt send.
 - Use the existing local Whisper/Kokoro stack; do not add a remote provider.
 

@@ -8,7 +8,8 @@ service of its own.
 | Path | Responsibility |
 | --- | --- |
 | `tui.tsx` | Plugin registration, footer button, settings dialog, dictation state, pending-draft queue, read-aloud subscription |
-| `voice_helper.py` | Windows microphone capture (ffmpeg/dshow), silence detection, RMS report, local Whisper transcription, local Kokoro speech |
+| `voice_helper.py` | Windows microphone capture (ffmpeg/dshow), silence detection, RMS report, local Whisper transcription, local Kokoro speech, warm-worker control |
+| `tts_worker.py` | Persistent local Kokoro worker: loads the pinned ONNX voice once and serves chunks over a private AF_UNIX socket |
 | `package.json` | `./tui` entrypoint |
 | `README.md` | User overview and install |
 | `rules.md` | Current owner contract |
@@ -39,6 +40,9 @@ TUI-only plugin path.
 footer button / F9 / Ctrl+Alt+V / /dictate
         │
         ▼
+prewarm ASR worker (fire-and-forget)
+        │
+        ▼
 voice_helper.py record
   ffmpeg dshow → 16 kHz mono WAV
   silencedetect stops after N seconds of silence
@@ -46,8 +50,8 @@ voice_helper.py record
         │
         ▼
 voice_helper.py transcribe
-  local Whisper service
-  returns text + confidence
+  warm AF_UNIX request → Whisper base.en
+  cold service fallback if the worker is absent
         │
         ▼
 queueDraft / flushPending
@@ -73,7 +77,8 @@ current session check + read-aloud setting
         │
         ▼
 speechQueue → voice_helper.py say
-  local Kokoro WAV → Windows speakers
+  warm TTS chunk request → Kokoro WAV → Windows speakers
+  cold service fallback if the worker is absent
 ```
 
 - Only completed assistant text for the currently open session is spoken.
@@ -86,6 +91,34 @@ speechQueue → voice_helper.py say
   plugin can resume the interrupted position.
 - Read-aloud and dictation both use the same local models; no cloud request is
   made.
+
+## Warm workers
+
+Both models stay loaded between turns. The plugin starts them in the background
+at setup and again before each dictation or reply, so an idle-exited worker is
+restored before the model is needed.
+
+| Worker | Model | Socket | Idle exit |
+| --- | --- | --- | --- |
+| ASR | Whisper `base.en` int8, 8 CPU threads | `$XDG_RUNTIME_DIR/firewatch-asr/asr.sock` | 30 min |
+| TTS | Kokoro `v1.0.int8`, 8 CPU threads | `$XDG_RUNTIME_DIR/tui-voice/tts.sock` | 30 min |
+
+- Sockets are AF_UNIX, mode `0600`, inside a uid-owned `0700` directory. Only the
+  same user can connect.
+- The TTS worker serves status while a chunk is synthesizing, so a second start
+  cannot race a busy worker.
+- `voice_helper.py warm --start|--status|--stop` manages both. Starts are
+  serialized with a lock file.
+- Warm requests fall back to the unchanged cold service path on any error. The
+  cold path still works with no worker running.
+- Replies are split into ~420-character chunks before synthesis, so the first
+  audio starts sooner, mute/resume is more precise, and one long ONNX request
+  cannot inflate worker memory.
+- The TTS worker disables the ORT CPU memory arena for the same reason; measured
+  RSS stayed near 300 MB across repeated long replies.
+- The workers are CPU-only. WSL exposes no ROCm/CUDA device for this AMD host, so
+  GPU acceleration is not silently attempted.
+
 
 ## Settings
 
@@ -114,7 +147,15 @@ footer with keyboard hints. It is not a full-screen route.
 | Dependency | Default | Override |
 | --- | --- | --- |
 | Local Whisper/Kokoro service | `~/repos/fire-tv-next/lulu-launcher/service` | `TUI_VOICE_SERVICE` |
+| Voice models and worker runtimes | `SERVICE/../voice` | `TUI_VOICE_VOICE_DIR` |
 | Python with the service | service `.venv/bin/python` | `TUI_VOICE_PYTHON` |
+| Warm ASR Python | `VOICE_DIR/.asr-venv/bin/python` | `TUI_VOICE_ASR_PYTHON` |
+| Warm TTS Python | `VOICE_DIR/.venv/bin/python` | `TUI_VOICE_TTS_PYTHON` |
+| Worker idle lifetime | 1800 seconds | `TUI_VOICE_WARM_IDLE` |
+| ASR worker threads | 8 | `TUI_VOICE_ASR_THREADS` |
+| TTS worker threads | 8 | `TUI_VOICE_TTS_THREADS` |
+| ASR socket | `$XDG_RUNTIME_DIR/firewatch-asr/asr.sock` | `TUI_VOICE_ASR_SOCKET` |
+| TTS socket | `$XDG_RUNTIME_DIR/tui-voice/tts.sock` | `TUI_VOICE_TTS_SOCKET` |
 | Windows ffmpeg | WinGet Gyan.FFmpeg auto-discovery | `TUI_VOICE_FFMPEG` |
 | Microphone | automatic real-input selection | `TUI_VOICE_MIC` |
 

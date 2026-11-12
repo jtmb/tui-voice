@@ -12,5 +12,6 @@ Start with [`../README.md`](../README.md) for install/use and
 | [RUNBOOK.md](RUNBOOK.md) | Install, update, restart, and rollback steps |
 | [BACKLOG.md](BACKLOG.md) | Known limits and possible follow-up work |
 
-The repository is intentionally small: the plugin is `tui.tsx` plus the Windows
-microphone/Whisper helper `voice_helper.py`.
+The repository is intentionally small: the plugin is `tui.tsx`, the Windows
+microphone/voice helper `voice_helper.py`, and the optional warm Kokoro worker
+`tts_worker.py`.

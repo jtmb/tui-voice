@@ -6,6 +6,8 @@ returns text from the existing local Whisper stack. No cloud service or TV.
 """
 import argparse
 import base64
+from contextlib import contextmanager
+import fcntl
 import glob
 import json
 import os
@@ -22,6 +24,15 @@ import time
 import wave
 
 SERVICE = Path(os.environ.get('TUI_VOICE_SERVICE', str(Path.home() / 'repos/fire-tv-next/lulu-launcher/service')))
+VOICE_DIR = Path(os.environ.get('TUI_VOICE_VOICE_DIR', str(SERVICE.parent / 'voice')))
+HERE = Path(__file__).resolve().parent
+ASR_WORKER = VOICE_DIR / 'asr-worker.py'
+TTS_WORKER = HERE / 'tts_worker.py'
+ASR_PYTHON = Path(os.environ.get('TUI_VOICE_ASR_PYTHON', str(VOICE_DIR / '.asr-venv/bin/python')))
+TTS_PYTHON = Path(os.environ.get('TUI_VOICE_TTS_PYTHON', str(VOICE_DIR / '.venv/bin/python')))
+WARM_IDLE = int(os.environ.get('TUI_VOICE_WARM_IDLE', '1800'))
+ASR_THREADS = int(os.environ.get('TUI_VOICE_ASR_THREADS', '8'))
+TTS_THREADS = int(os.environ.get('TUI_VOICE_TTS_THREADS', '8'))
 POWERSHELL = '/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe'
 CMD = '/mnt/c/Windows/System32/cmd.exe'
 _current = None
@@ -264,6 +275,152 @@ def voice():
     return WebVoice()
 
 
+def runtime_base():
+    value = os.environ.get('XDG_RUNTIME_DIR')
+    return Path(value) if value else Path.home() / '.cache'
+
+
+def asr_socket():
+    value = os.environ.get('TUI_VOICE_ASR_SOCKET')
+    if value:
+        return Path(value)
+    return runtime_base() / 'firewatch-asr/asr.sock'
+
+
+def tts_socket():
+    value = os.environ.get('TUI_VOICE_TTS_SOCKET')
+    if value:
+        return Path(value)
+    return runtime_base() / 'tui-voice/tts.sock'
+
+
+def _recv_exact(connection, size):
+    parts = []
+    while size:
+        part = connection.recv(min(size, 65536))
+        if not part:
+            raise ConnectionError('Warm worker closed mid-frame')
+        parts.append(part)
+        size -= len(part)
+    return b''.join(parts)
+
+
+def _frame(connection, message):
+    data = json.dumps(message, separators=(',', ':')).encode()
+    connection.sendall(len(data).to_bytes(4, 'big') + data)
+
+
+def _frame_in(connection):
+    size = int.from_bytes(_recv_exact(connection, 4), 'big')
+    if not 0 < size <= 16 * 1024 * 1024:
+        raise ValueError('Warm worker frame outside finite budget')
+    return json.loads(_recv_exact(connection, size))
+
+
+def worker_request(path, request, timeout=180, quiet=False):
+    """Talk to a warm worker. Returns None when it is absent or rejects the request."""
+    try:
+        import socket
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
+            connection.settimeout(2)
+            connection.connect(str(path))
+            connection.settimeout(timeout)
+            _frame(connection, request)
+            response = _frame_in(connection)
+    except (OSError, ValueError, ConnectionError) as error:
+        if not quiet:
+            print(f'Warm worker unavailable at {path} ({error}); using cold path', file=sys.stderr)
+        return None
+    if not isinstance(response, dict) or response.get('ok') is not True:
+        detail = response.get('error') if isinstance(response, dict) else 'malformed response'
+        if not quiet:
+            print(f'Warm worker rejected request ({detail}); using cold path', file=sys.stderr)
+        return None
+    result = response.get('result')
+    return result if isinstance(result, dict) else None
+
+
+def warm_transcribe(encoded):
+    result = worker_request(asr_socket(), {'operation': 'transcribe', 'wav': encoded}, timeout=120)
+    if (result is None or not isinstance(result.get('text'), str)
+            or not isinstance(result.get('confidence'), (int, float))
+            or not isinstance(result.get('engine'), str)
+            or result.get('raw_audio_retained') is not False):
+        return None
+    return result
+
+
+def warm_speak(text, voice_id):
+    result = worker_request(tts_socket(), {'operation': 'speak', 'text': text, 'voice': voice_id})
+    if result is None or not isinstance(result.get('wav'), str):
+        return None
+    return result
+
+
+def warm_status():
+    status = {'asr': None, 'tts': None}
+    for kind, path in (('asr', asr_socket()), ('tts', tts_socket())):
+        status[kind] = worker_request(path, {'operation': 'status'}, timeout=3, quiet=True)
+    return status
+
+
+@contextmanager
+def warm_lock():
+    """Serialize worker starts so concurrent plugin reloads cannot race sockets."""
+    directory = tts_socket().parent
+    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+    path = directory / 'warm.lock'
+    handle = open(path, 'a+')
+    try:
+        os.chmod(path, 0o600)
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        yield
+    finally:
+        fcntl.flock(handle, fcntl.LOCK_UN)
+        handle.close()
+
+
+def start_worker(kind, idle_seconds=None):
+    with warm_lock():
+        path = asr_socket() if kind == 'asr' else tts_socket()
+        if worker_request(path, {'operation': 'status'}, timeout=3, quiet=True) is not None:
+            return {'ok': True, 'state': 'already running', 'socket': str(path)}
+        python = ASR_PYTHON if kind == 'asr' else TTS_PYTHON
+        script = ASR_WORKER if kind == 'asr' else TTS_WORKER
+        if not python.is_file():
+            return {'ok': False, 'error': f'Missing {kind} worker Python: {python}'}
+        if not script.is_file():
+            return {'ok': False, 'error': f'Missing {kind} worker script: {script}'}
+        idle = WARM_IDLE if idle_seconds is None else max(0, int(idle_seconds))
+        threads = ASR_THREADS if kind == 'asr' else TTS_THREADS
+        command = [str(python), str(script), '--start', '--socket', str(path),
+                   '--idle-seconds', str(idle), '--threads', str(threads)]
+        try:
+            completed = subprocess.run(command, capture_output=True, text=True, timeout=45)
+        except (OSError, subprocess.TimeoutExpired) as error:
+            return {'ok': False, 'error': f'{kind} worker start failed: {error}'}
+        if completed.returncode != 0:
+            detail = (completed.stderr or completed.stdout or '').strip()[-400:]
+            return {'ok': False, 'error': f'{kind} worker start failed: {detail}'}
+        running = worker_request(path, {'operation': 'status'}, timeout=3, quiet=True) is not None
+        return {'ok': running, 'state': 'started' if running else 'not running',
+                'socket': str(path), 'output': (completed.stdout or '').strip()[-200:]}
+
+
+def stop_worker(kind):
+    path = asr_socket() if kind == 'asr' else tts_socket()
+    result = worker_request(path, {'operation': 'shutdown'}, timeout=5)
+    stopped = result is not None
+    if stopped:
+        for _ in range(50):
+            time.sleep(0.1)
+            if worker_request(path, {'operation': 'status'}, timeout=0.3, quiet=True) is None:
+                break
+        else:
+            stopped = False
+    return {'ok': stopped, 'stopping': stopped, 'socket': str(path)}
+
+
 def transcribe(path):
     path = Path(path)
     if not path.is_file() or path.stat().st_size <= 44:
@@ -271,7 +428,9 @@ def transcribe(path):
     temporary = path.parent == windows_temp()
     data = base64.b64encode(path.read_bytes()).decode('ascii')
     try:
-        result = voice().transcribe(data)
+        result = warm_transcribe(data)
+        if result is None:
+            result = voice().transcribe(data)
     except Exception as error:
         fail('Local transcription failed: ' + str(error))
     finally:
@@ -295,7 +454,7 @@ def play(path):
     return {'ok': True, 'path': str(path), 'windows_path': windows_path}
 
 
-def chunks(text, limit=900):
+def chunks(text, limit=420):
     clean = re.sub(r'```.*?```', ' ', text, flags=re.S)
     clean = re.sub(r'\[([^\]]+)\]\([^)]*\)', r'\1', clean)
     clean = re.sub(r'https?://\S+', '', clean)
@@ -320,7 +479,8 @@ def say(text, voice_id='heart', should_play=True, start_chunk=0, progress_file=N
     text = str(text or '').strip()
     if not text:
         fail('Nothing to speak')
-    engine = voice()
+    engine = None
+    warmed = 0
     directory = windows_temp()
     spoken = 0
     parts = chunks(text)
@@ -334,7 +494,13 @@ def say(text, voice_id='heart', should_play=True, start_chunk=0, progress_file=N
                     Path(progress_file).write_text(json.dumps({'chunk': index, 'chunks': len(parts)}))
                 except OSError:
                     pass
-            result = engine.speak(chunk, voice_id)
+            result = warm_speak(chunk, voice_id)
+            if result is not None:
+                warmed += 1
+            else:
+                if engine is None:
+                    engine = voice()
+                result = engine.speak(chunk, voice_id)
             path = directory / ('tui-voice-reply-' + str(os.getpid()) + '-' + str(index) + '.wav')
             path.write_bytes(base64.b64decode(result['wav']))
             spoken += 1
@@ -347,7 +513,7 @@ def say(text, voice_id='heart', should_play=True, start_chunk=0, progress_file=N
     except Exception as error:
         fail('Local speech failed: ' + str(error))
     return {'ok': True, 'voice': voice_id, 'chunks': spoken, 'played': bool(should_play),
-            'start': start_chunk, 'total': len(parts)}
+            'start': start_chunk, 'total': len(parts), 'warm_chunks': warmed}
 
 
 def main():
@@ -376,7 +542,26 @@ def main():
     say_parser.add_argument('--start-chunk', type=int, default=0)
     say_parser.add_argument('--progress-file')
 
+    warm_parser = sub.add_parser('warm', help='manage persistent warm ASR/TTS workers')
+    warm_parser.add_argument('--start', action='store_true')
+    warm_parser.add_argument('--stop', action='store_true')
+    warm_parser.add_argument('--status', action='store_true')
+    warm_parser.add_argument('--restart', action='store_true')
+    warm_parser.add_argument('--kind', choices=('asr', 'tts', 'both'), default='both')
+    warm_parser.add_argument('--idle-seconds', type=int)
+
     args = parser.parse_args()
+    if args.command == 'warm':
+        kinds = ('asr', 'tts') if args.kind == 'both' else (args.kind,)
+        if args.status:
+            output({'ok': True, 'workers': warm_status()})
+        if args.stop or args.restart:
+            stopped = {kind: stop_worker(kind) for kind in kinds}
+            if args.stop:
+                output({'ok': True, 'stopped': stopped})
+            time.sleep(0.2)
+        started = {kind: start_worker(kind, args.idle_seconds) for kind in kinds}
+        output({'ok': all(item['ok'] for item in started.values()), 'started': started})
     if args.command == 'devices':
         names = devices()
         selected, _ = choose_mic()

@@ -47,6 +47,9 @@ Do not move it to the composer, a dialog, or an overlay.
 - It speaks only completed assistant replies in the currently open session.
 - Verify the helper directly:
   `voice_helper.py say --text "test" --voice heart`.
+- Check the warm workers:
+  `voice_helper.py warm --status`; use `warm --start` if either is absent or
+  `warm --restart` after changing models.
 - Read-aloud uses Windows speakers; check the default output device.
 - If dictation is active, speech waits for the turn to finish.
 

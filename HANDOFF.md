@@ -1,5 +1,29 @@
 # tui-voice handoff
 
+## 2026-11-11 EST — persistent warm ASR and TTS workers
+
+- Added `tts_worker.py`: one Kokoro `v1.0.int8` ONNX session stays loaded and
+  serves bounded text chunks over a uid-owned AF_UNIX socket. It has
+  `--start/--status/--stop/--run`, a 30-minute idle exit, and a threaded request
+  loop so `status` answers even while a chunk is synthesizing.
+- `voice_helper.py transcribe` now asks the existing warm Whisper worker first;
+  `say` asks the warm TTS worker for each chunk. Any error or missing worker falls
+  through to the unchanged cold service path.
+- Added `voice_helper.py warm --start|--status|--stop [--kind asr|tts|both]`.
+  Starts are serialized with a lock file, so a plugin reload cannot race a busy
+  worker. The plugin prewarms at setup and before each dictation/read-aloud; the
+  workers survive TUI restarts.
+- Measured on this CPU-only WSL host:
+  - Warm ASR fixture: ~0.6 s total helper run (cold ~1.5 s), same
+    transcript/confidence.
+  - Warm TTS short sentence: ~1.1 s (cold ~3.2 s); 8 CPU threads and a disabled
+    ORT CPU arena keep it fast without retaining memory across turns.
+  - Mute killed the active `say`; unmute started a new helper with
+    `--start-chunk` and the warm worker request count increased.
+- GPU remains unavailable: WSL exposes no `/dev/dri`, `/dev/kfd`, ROCm, CUDA, or
+  `nvidia-smi`; the Windows host has an AMD RX 7900 XT. `faster-whisper` needs
+  CUDA, and Kokoro runs on `CPUExecutionProvider`.
+
 ## 2026-11-12 UTC — standalone plugin, native settings, footer button
 
 - Owner moved the plugin out of `fire-tv-next` into the standalone repository
@@ -44,9 +68,11 @@
 - Mouse-click activation of the footer button is not separately automated. The
   keyboard paths are the guaranteed acceptance path; the button now accepts both
   mouse down and up with a debounce.
-- Physical speech clarity, missing words, room noise, and latency were not
-  physically qualified. Use **Input gain**, **Silence threshold**, and **Test
+- Physical speech clarity, missing words, room noise, and perceived latency were
+  not physically qualified. Use **Input gain**, **Silence threshold**, and **Test
   microphone**; 6–12 dB gain may help a quiet Focusrite input.
+- Warm workers are CPU-only. A Windows-side DirectML helper would be needed to use
+  the AMD GPU; it was not added.
 - Dictation during a running reply is implemented and code-reviewed, but a full
   physically spoken queue test during a live model turn was not repeated.
 - Read-aloud and dictation can overlap if the user starts speaking during playback;

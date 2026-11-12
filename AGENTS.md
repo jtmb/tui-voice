@@ -41,6 +41,8 @@ all product/UI names here are `tui-voice` / `tui.voice`.
 | Helper | `voice_helper.py` |
 | Whisper service | `~/repos/fire-tv-next/lulu-launcher/service` (override `TUI_VOICE_SERVICE`) |
 | Python | `.../service/.venv/bin/python` (override `TUI_VOICE_PYTHON`) |
+| Warm ASR Python | `.../voice/.asr-venv/bin/python` (override `TUI_VOICE_ASR_PYTHON`) |
+| Warm TTS Python | `.../voice/.venv/bin/python` (override `TUI_VOICE_TTS_PYTHON`) |
 | Windows ffmpeg | WinGet Gyan.FFmpeg, auto-discovered (override `TUI_VOICE_FFMPEG`) |
 | Microphone | Automatic; override `TUI_VOICE_MIC` |
 | Platform | WSL2 + Windows microphone/speakers |
@@ -53,6 +55,7 @@ Windows ffmpeg available.
 ```
 tui.tsx                 OpenCode TUI plugin: footer button, settings dialog, queues
 voice_helper.py         Windows mic capture, VAD, Whisper transcription, Kokoro TTS
+tts_worker.py           Persistent local Kokoro worker (AF_UNIX, no cloud)
 README.md               User-facing overview and install
 rules.md                Current product contract
 HANDOFF.md              Current state, evidence, open work
@@ -65,7 +68,7 @@ docs/                   Architecture, settings, testing, troubleshooting, runboo
 cd ~/repos/tui-voice
 
 # Syntax/helper check
-python3 -m py_compile voice_helper.py
+python3 -m py_compile voice_helper.py tts_worker.py
 
 # Plugin discovery
 opencode plugin list
@@ -74,6 +77,8 @@ opencode plugin list
 ~/repos/fire-tv-next/lulu-launcher/service/.venv/bin/python voice_helper.py devices
 ~/repos/fire-tv-next/lulu-launcher/service/.venv/bin/python voice_helper.py \
   transcribe --wav ~/repos/fire-tv-next/lulu-launcher/voice/fixtures/short-2s.wav
+~/repos/fire-tv-next/lulu-launcher/service/.venv/bin/python voice_helper.py warm --status
+~/repos/fire-tv-next/lulu-launcher/service/.venv/bin/python voice_helper.py warm --start
 ```
 
 A fresh TUI loads the plugin globally. A path change or a newly added TUI-only
@@ -85,6 +90,11 @@ plugin requires closing and reopening the TUI; `/reload` alone is not sufficient
   text-ended subscription. It calls `voice_helper.py` for capture and transcription.
 - `voice_helper.py` records Windows `dshow` audio with ffmpeg, stops after silence,
   runs local Whisper, and can synthesize/play Kokoro speech.
+- `tts_worker.py` keeps one Kokoro ONNX session loaded and serves chunks over
+  `$XDG_RUNTIME_DIR/tui-voice/tts.sock`. The existing ASR warm worker serves
+  Whisper over `$XDG_RUNTIME_DIR/firewatch-asr/asr.sock`.
+- The plugin starts both workers in the background at setup and before dictation
+  or read-aloud. Warm requests fall back to the cold service path on any error.
 - Settings are stored under the `tui-voice` key and apply globally.
 - Dictation is queued if the session is replying; read-aloud is a separate queued
   speech path.
@@ -99,6 +109,8 @@ plugin requires closing and reopening the TUI; `/reload` alone is not sufficient
 - `Ctrl+Alt+S` opens a centered settings dialog; arrows change values; `Esc` closes.
 - Footer `🔊` / `🔇` (or `Ctrl+Alt+M`/`F10`) toggles read-aloud, stops current
   playback, and resumes the interrupted reply on unmute.
+- `voice_helper.py warm --status` reports a CPU ASR worker and a TTS worker; a
+  fixture transcript and `say --no-play` report `warm_chunks`.
 - Read-aloud On speaks a completed assistant reply; Off stays silent.
 - `voice_helper.py devices` lists the real Windows input (Focusrite before the
   virtual Steam microphone).

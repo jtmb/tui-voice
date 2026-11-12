@@ -113,23 +113,39 @@ voice_helper.py record
         │
         ▼
 voice_helper.py transcribe
-  local Whisper → text
+  warm Whisper worker → text (cold service fallback)
         │
         ▼
 message box draft (never auto-sent)
 ```
 
 Read-aloud listens to completed assistant text in the current session and runs
-`voice_helper.py say` with the selected Kokoro voice.
+`voice_helper.py say` with the selected Kokoro voice. A persistent warm TTS worker
+keeps the ONNX voice loaded between chunks and replies.
 
 The plugin depends on the existing local voice stack:
 
 | Dependency | Default | Override |
 | --- | --- | --- |
 | Whisper/Kokoro service | `~/repos/fire-tv-next/lulu-launcher/service` | `TUI_VOICE_SERVICE` |
+| Voice models / worker runtimes | `lulu-launcher/voice` | `TUI_VOICE_VOICE_DIR` |
 | Python | service `.venv/bin/python` | `TUI_VOICE_PYTHON` |
+| Warm ASR Python | `voice/.asr-venv/bin/python` | `TUI_VOICE_ASR_PYTHON` |
+| Warm TTS Python | `voice/.venv/bin/python` | `TUI_VOICE_TTS_PYTHON` |
 | Windows ffmpeg | WinGet Gyan.FFmpeg auto-discovery | `TUI_VOICE_FFMPEG` |
 | Microphone | automatic | `TUI_VOICE_MIC` |
+
+Warm workers are optional. If either is absent or fails, the helper uses the
+unchanged cold local path. Manage them with:
+
+```bash
+~/repos/fire-tv-next/lulu-launcher/service/.venv/bin/python voice_helper.py warm --status
+~/repos/fire-tv-next/lulu-launcher/service/.venv/bin/python voice_helper.py warm --start
+~/repos/fire-tv-next/lulu-launcher/service/.venv/bin/python voice_helper.py warm --stop
+```
+
+Both keep audio local and exit after 30 idle minutes; the plugin starts them again
+before the next dictation or reply.
 
 ## Privacy
 

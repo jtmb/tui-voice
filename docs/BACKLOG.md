@@ -4,8 +4,9 @@
 
 - Footer button mouse activation is not automatically verified. The keyboard
   shortcuts (`Ctrl+Alt+V`, `F9`, `/dictate`) are the reliable path.
-- Physical speech accuracy, latency, echo, and the best gain/threshold values for
-  the owner’s room are not measured.
+- Physical speech accuracy, perceived latency, echo, and the best gain/threshold
+  values for the owner’s room are not measured. Warm-worker startup and per-turn
+  CPU timings are measured; GPU acceleration is unavailable in this WSL host.
 - Dictation queued behind a running model reply is implemented but not physically
   repeated end to end.
 - Read-aloud and dictation can overlap if the user speaks during playback.
@@ -13,6 +14,7 @@
 
 ## Possible follow-up
 
+- Evaluate a Windows-side DirectML helper for Kokoro/Whisper on the AMD GPU.
 - Add a small automated harness for `voice_helper.py` VAD/args and settings
   persistence.
 - Add a one-key “stop read-aloud” action.

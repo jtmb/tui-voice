@@ -9,10 +9,13 @@ infrastructure for this plugin.
 ```bash
 cd ~/repos/tui-voice
 
-python3 -m py_compile voice_helper.py
+python3 -m py_compile voice_helper.py tts_worker.py
 
 SERVICE=~/repos/fire-tv-next/lulu-launcher/service
 $SERVICE/.venv/bin/python voice_helper.py devices
+
+$SERVICE/.venv/bin/python voice_helper.py warm --start
+$SERVICE/.venv/bin/python voice_helper.py warm --status
 
 $SERVICE/.venv/bin/python voice_helper.py transcribe \
   --wav ~/repos/fire-tv-next/lulu-launcher/voice/fixtures/short-2s.wav
@@ -22,8 +25,31 @@ Expected:
 
 - `devices` lists the real Windows input first (Focusrite Analogue 1 + 2) and the
   virtual Steam microphone second.
+- `warm --status` reports an `asr` worker on CPU and a `tts` worker with the four
+  local voices.
 - `transcribe` returns “Turn on the living room lights.” with confidence around
-  0.93.
+  0.93. With the warm worker it completes in about half a second.
+
+## Warm-worker checks
+
+```bash
+cd ~/repos/tui-voice
+SERVICE=~/repos/fire-tv-next/lulu-launcher/service
+
+# Status must answer even while speech is synthesizing.
+$SERVICE/.venv/bin/python voice_helper.py say \
+  --text "This is a warm local speech test." --no-play
+$SERVICE/.venv/bin/python voice_helper.py warm --status
+
+# Stop and confirm the cold fallback still works, then start again.
+$SERVICE/.venv/bin/python voice_helper.py warm --stop
+$SERVICE/.venv/bin/python voice_helper.py say --text "Cold fallback." --no-play
+$SERVICE/.venv/bin/python voice_helper.py warm --start
+```
+
+Expected: `say` reports `"warm_chunks": 1` with a worker running and `0` after
+`warm --stop`; both paths return usable audio. The worker sockets are `0600` under
+`$XDG_RUNTIME_DIR`.
 
 ## Fresh-TUI gate
 
@@ -49,10 +75,17 @@ Close the current TUI completely and start a new one from outside the repository
 ## Verified evidence
 
 - Fixture transcript inserted into the message box without sending.
+- Warm ASR returned the same fixture transcript in ~0.6 s (cold ~1.5 s); the TTS
+  worker kept one ONNX session and served repeated chunks (warm ~1.1 s vs cold
+  ~3.2 s for the same short sentence, 8 threads).
+- Stopping a worker waits for the socket to disappear; two concurrent starts
+  produced one worker.
 - Settings dialog opened, values changed, read-aloud toggled, `Test microphone`
   returned `Input level 87 · quiet · peak 1724`.
 - Read-aloud spawned:
   `voice_helper.py say --text "read aloud final check." --voice heart`.
+- Read-aloud mute stopped the helper; unmute started a new helper with
+  `--start-chunk` and incremented the warm worker request count.
 - Silence auto-stop stopped a synthetic recording after the speech segment rather
   than using the full maximum.
 - Global load verified from `/home/brajam`, not from this repository.

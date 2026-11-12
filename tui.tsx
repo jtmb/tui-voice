@@ -85,6 +85,15 @@ function helperPayload(args: string[], timeoutMs: number, track?: (child: ChildP
 
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
 
+function prewarmWorkers() {
+  if (!PYTHON) return
+  try {
+    const worker = spawn(PYTHON, [HELPER, "warm", "--start"], {detached: true, stdio: "ignore"})
+    worker.on("error", () => {})
+    worker.unref()
+  } catch {}
+}
+
 function stopVoice() {
   setActive(false)
   setPhase("idle")
@@ -192,6 +201,7 @@ async function toggleVoice(context: any) {
     }
     setActive(true)
     setPhase("listening")
+    prewarmWorkers()
     toast(context, "Listening… speak now, then pause.", "info")
     const args = [
       "record",
@@ -251,6 +261,7 @@ function resumeInterruptedSpeech(context: any) {
 function speakReply(context: any, text: string, options?: {startChunk?: number; voice?: string}) {
   const startChunk = Math.max(0, options?.startChunk ?? 0)
   const voice = options?.voice || settings.voice || "heart"
+  prewarmWorkers()
   speechQueue = speechQueue.then(async () => {
     if (!readAloudEnabled()) return
     while (active()) await delay(250)
@@ -660,6 +671,7 @@ export default Plugin.define({
     updateSettings = update
     onToggle = () => { void toggleVoice(context) }
     onMute = () => { void toggleMute(context) }
+    prewarmWorkers()
     context.ui.toast.show({title: "tui-voice", message: "Ready · F9 or Ctrl+Alt+V", variant: "info", duration: 3000})
 
     createEffect(() => {
