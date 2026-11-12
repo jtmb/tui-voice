@@ -1,0 +1,16 @@
+# tui-voice documentation
+
+Start with [`../README.md`](../README.md) for install/use and
+[`../rules.md`](../rules.md) for the current product contract.
+
+| Document | Purpose |
+| --- | --- |
+| [ARCHITECTURE.md](ARCHITECTURE.md) | Files, data flow, state, queues, dependencies |
+| [SETTINGS.md](SETTINGS.md) | Every setting, defaults, and tuning guidance |
+| [TESTING.md](TESTING.md) | Fresh-TUI gate, helper checks, verified evidence |
+| [TROUBLESHOOTING.md](TROUBLESHOOTING.md) | Plugin not loading, no audio, no transcript, theme issues |
+| [RUNBOOK.md](RUNBOOK.md) | Install, update, restart, and rollback steps |
+| [BACKLOG.md](BACKLOG.md) | Known limits and possible follow-up work |
+
+The repository is intentionally small: the plugin is `tui.tsx` plus the Windows
+microphone/Whisper helper `voice_helper.py`.

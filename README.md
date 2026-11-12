@@ -71,3 +71,10 @@ Those paths point at the existing local voice stack; no cloud service is used.
 - The transcript goes only into the local OpenCode message box.
 - Read-aloud uses the existing local Kokoro model and Windows speakers.
 - No TV, no Control Center login, no automatic send, no upload.
+
+## Repository docs
+
+- [`AGENTS.md`](AGENTS.md) — agent rules and verification checklist
+- [`rules.md`](rules.md) — current product contract
+- [`HANDOFF.md`](HANDOFF.md) — current state, evidence, limits
+- [`docs/`](docs/README.md) — architecture, settings, testing, troubleshooting, runbook
