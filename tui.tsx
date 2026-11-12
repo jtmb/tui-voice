@@ -535,6 +535,13 @@ function openSettings(context: any) {
 }
 
 function VoiceButton(props: {sessionID?: string}) {
+  let lastAction = 0
+  const activate = () => {
+    const now = Date.now()
+    if (now - lastAction < 500) return
+    lastAction = now
+    onToggle()
+  }
   createEffect(() => {
     if (props.sessionID && props.sessionID !== lastSession) {
       if (lastSession && active()) stopVoice()
@@ -542,9 +549,11 @@ function VoiceButton(props: {sessionID?: string}) {
     }
   })
   return (
-    <box onMouseUp={() => onToggle()} paddingLeft={2} paddingRight={2}
+    <box focusable={true} onMouseDown={activate} onMouseUp={activate}
+      onKeyDown={(key: any) => { if (key?.name === "return" || key?.name === "space") activate() }}
+      paddingLeft={2} paddingRight={2}
       backgroundColor={active() ? "#3a2d1e" : "#15384a"}>
-      <text fg={phaseColor()} onMouseUp={() => onToggle()}>◉ {active() ? phaseLabel() : "Voice"}</text>
+      <text fg={phaseColor()} onMouseDown={activate} onMouseUp={activate}>◉ {active() ? phaseLabel() : "Voice"}</text>
     </box>
   )
 }
@@ -558,6 +567,7 @@ export default Plugin.define({
     settings = stored as Settings
     updateSettings = update
     onToggle = () => { void toggleVoice(context) }
+    context.ui.toast.show({title: "tui-voice", message: "Ready · F9 or Ctrl+Alt+V", variant: "info", duration: 3000})
 
     const stopText = context.data.on("session.text.ended", (event: any) => {
       const route = context.ui.router.current()
@@ -567,8 +577,12 @@ export default Plugin.define({
     })
 
     const offFooter = context.ui.slot({
-      append: "prompt.footer",
-      render: input => <VoiceButton sessionID={input.sessionID} />,
+      append: "session.composer.top",
+      render: input => (
+        <box width="100%" flexDirection="row" justifyContent="flex-end">
+          <VoiceButton sessionID={input.sessionID} />
+        </box>
+      ),
     })
 
     context.keymap.layer(() => ({
