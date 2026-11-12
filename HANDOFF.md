@@ -5,17 +5,18 @@
 - Replaced the two separated footer buttons with one compact rounded panel that
   stays in the existing **one-row** footer: half-cell rounded caps, the status
   circle + studio microphone `🎙`, a recessed `│` divider, then the speaker.
-- Kept `🎙` (the handheld `🎤` read as a flashlight). The status circle comes
-  first so the panel begins on a compact glyph. There is no horizontal padding;
-  the half-cell caps themselves provide the end gutters.
+- Kept the studio microphone (the handheld `🎤` read as a flashlight) and used
+  the text-presentation form so it fits the one-row line. The status circle sits
+  directly against the microphone; one cell is reserved after the microphone so
+  the divider cannot clip it. The half-cell caps provide the end gutters.
 - Explicitly rejected a three-row rounded border: the footer bar must not grow.
 - State styling is the status circle only: blue `○` idle, amber `●` listening,
   cyan `◐` transcribing, red `✕` error. No tinted block.
 - The panel hides while the settings dialog is open, returning an empty one-row
   spacer so the footer does not jump when the dialog closes.
-- Verified in a fresh TUI at 80, 100, and 140 columns: `▐○🎙│🔊▌`,
-  `▐●🎙│🔊▌`, and `▐○🎙│🔇▌` keep the same columns and the footer stays one
-  row.
+- Verified in a fresh TUI at 80, 100, and 140 columns: `▐○🎙 │🔊▌`,
+  `▐●🎙 │🔊▌`, and `▐○🎙 │🔇▌` keep the same columns and the footer stays
+  one row.
 
 ## 2026-11-11 EST — persistent warm ASR and TTS workers
 

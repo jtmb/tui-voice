@@ -643,12 +643,12 @@ function VoiceButton(props: {sessionID?: string; panel: any}) {
       <text fg={indicator().color} onMouseDown={activate} onMouseUp={activate}>
         {indicator().glyph}
       </text>
-      <text onMouseDown={activate} onMouseUp={activate}>🎙</text>
+      <text fg={indicator().color} onMouseDown={activate} onMouseUp={activate}>{"🎙\uFE0E"}</text>
     </box>
   )
 }
 
-function MuteButton(props: {panel: any}) {
+function MuteButton(props: {panel: any; theme: any}) {
   let lastAction = 0
   const activate = () => {
     const now = Date.now()
@@ -659,8 +659,9 @@ function MuteButton(props: {panel: any}) {
   return (
     <box flexDirection="row" backgroundColor={props.panel}
       onMouseDown={activate} onMouseUp={activate}>
-      <text onMouseDown={activate} onMouseUp={activate}>
-        {readAloudEnabled() ? "🔊" : "🔇"}
+      <text fg={readAloudEnabled() ? props.theme.text?.base : props.theme.text?.muted}
+        onMouseDown={activate} onMouseUp={activate}>
+        {readAloudEnabled() ? "🔊\uFE0E" : "🔇\uFE0E"}
       </text>
     </box>
   )
@@ -706,8 +707,9 @@ export default Plugin.define({
             <text fg={panel}>▐</text>
             <box flexDirection="row" height={1} backgroundColor={panel}>
               <VoiceButton sessionID={input.sessionID} panel={panel} />
+              <text> </text>
               <text fg={theme.background?.raised?.base}>│</text>
-              <MuteButton panel={panel} />
+              <MuteButton panel={panel} theme={theme} />
             </box>
             <text fg={panel}>▌</text>
           </box>

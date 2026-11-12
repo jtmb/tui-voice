@@ -58,7 +58,7 @@ Close the current TUI completely and start a new one from outside the repository
 
 1. `opencode plugin list` includes `/home/brajam/repos/tui-voice`.
 2. Open a chat session. The bottom footer shows one compact rounded panel
-   (one footer row) with `▐○🎙│🔊▌`-style half-cell caps and a divider.
+   (one footer row) with `▐○🎙 │🔊▌`-style half-cell caps and a divider.
 3. Press `Ctrl+Alt+V`. The status circle turns amber `●` and the mic segment
    tints; a helper `record` process starts. The panel does not move or resize.
 4. Wait for silence / the maximum. It changes to `Transcribing`, then a transcript
@@ -78,9 +78,9 @@ Close the current TUI completely and start a new one from outside the repository
 ## Verified evidence
 
 - Fixture transcript inserted into the message box without sending.
-- Rounded footer panel verified at 80, 100, and 140 columns: `▐○🎙│🔊▌`,
-  `▐●🎙│🔊▌`, and `▐○🎙│🔇▌` keep identical cell widths and columns; the footer
-  stays one row, with no clipping, overlap, or layout shift.
+- Rounded footer panel verified at 80, 100, and 140 columns: `▐○🎙 │🔊▌`,
+  `▐●🎙 │🔊▌`, and `▐○🎙 │🔇▌` keep identical cell widths and columns; the
+  footer stays one row, with no clipping, overlap, or layout shift.
 - Warm ASR returned the same fixture transcript in ~0.6 s (cold ~1.5 s); the TTS
   worker kept one ONNX session and served repeated chunks (warm ~1.1 s vs cold
   ~3.2 s for the same short sentence, 8 threads).
