@@ -74,16 +74,17 @@
   Starts are serialized with a lock file, so a plugin reload cannot race a busy
   worker. The plugin prewarms at setup and before each dictation/read-aloud; the
   workers survive TUI restarts.
-- Measured on this CPU-only WSL host:
+- Measured with the CPU-only worker configuration at that time:
   - Warm ASR fixture: ~0.6 s total helper run (cold ~1.5 s), same
     transcript/confidence.
   - Warm TTS short sentence: ~1.1 s (cold ~3.2 s); 8 CPU threads and a disabled
     ORT CPU arena keep it fast without retaining memory across turns.
   - Mute killed the active `say`; unmute started a new helper with
     `--start-chunk` and the warm worker request count increased.
-- GPU remains unavailable: WSL exposes no `/dev/dri`, `/dev/kfd`, ROCm, CUDA, or
-  `nvidia-smi`; the Windows host has an AMD RX 7900 XT. `faster-whisper` needs
-  CUDA, and Kokoro runs on `CPUExecutionProvider`.
+- Historical GPU assessment (corrected 2026-11-12): the worker was hard-coded to
+  `CPUExecutionProvider`. Missing `/dev/dri`, `/dev/kfd`, CUDA, or `nvidia-smi`
+  did not establish that the Windows host's AMD RX 7900 XT was unusable in WSL.
+  AMD's WSL compute interface uses `/dev/dxg`; see the GPU entry below.
 
 ## 2026-11-12 UTC — standalone plugin, native settings, footer button
 
@@ -132,14 +133,16 @@
 - Physical speech clarity, missing words, room noise, and perceived latency were
   not physically qualified. Use **Input gain**, **Silence threshold**, and **Test
   microphone**; 6–12 dB gain may help a quiet Focusrite input.
-- Warm workers are CPU-only. A Windows-side DirectML helper would be needed to use
-  the AMD GPU; it was not added.
+- AMD GPU TTS is opt-in through MIGraphX in the existing WSL worker. The owner's
+  Windows driver, WSL ROCm installation, and actual RX 7900 XT inference remain
+  unverified. A Windows-side DirectML helper is not required by this path.
 - Dictation during a running reply is implemented and code-reviewed, but a full
   physically spoken queue test during a live model turn was not repeated.
 - Read-aloud and dictation can overlap if the user starts speaking during playback;
   headphones are recommended.
-- No automated test suite exists. Checks are helper commands plus a fresh-TUI
-  manual gate.
+- Focused standard-library regression tests cover provider selection, model
+  integrity, GPU fallback refusal, and singleton startup. Hardware and fresh-TUI
+  verification still require the owner's environment.
 - The settings dialog is custom JSX. Host dialog sizing/theming can change between
   OpenCode releases.
 - The plugin depends on the local voice stack at
@@ -155,3 +158,32 @@
 - No TV, ADB, or Control Center management was added.
 - Temporary capture files are deleted after transcription.
 - Git repository initialized locally with commits; no remote configured/pushed.
+
+## 2026-11-12 EST — optional AMD GPU TTS
+
+- Added explicit CPU/MIGraphX provider selection to the existing local Kokoro
+  ONNX worker. CPU stays the default. GPU mode defaults to the FP32
+  `kokoro-v1.0.onnx`; selected models and voices must be pinned in the external
+  `neural-models.json`, and all existing manifest hashes remain enforced.
+- GPU selection fails clearly if the AMD provider cannot load or an old CPU
+  worker is still active. The helper does not substitute cold CPU TTS when GPU
+  was explicitly requested. Restart with `warm --restart --kind tts` after
+  configuration changes. Initial GPU compilation can take up to 300 seconds;
+  use `tts_worker.py --run` to see startup errors in the foreground.
+- `tts_worker.py --check` synthesizes a fixed phrase twice and reports session
+  providers, per-provider executed-node counts/times, and synthesis timing. A
+  GPU request fails the check if no GPU nodes execute. No playback or user
+  recording is needed for that diagnostic.
+- The actual worker holds a lock before model loading and throughout its
+  lifetime, so muting/retrying during GPU compilation cannot load a second model
+  on the same socket. Initialization errors are appended to the private
+  `tts-startup.log` beside that socket.
+- Validation here: 13 focused standard-library tests, Python syntax checks,
+  and a source review. No ROCm runtime, Kokoro model, Windows audio device, or
+  RX 7900 XT is connected to this development environment.
+- [AMD setup and validation](docs/AMD_GPU.md) documents matching runtime routes,
+  FP32 model preparation, the WSL `/dev/dxg` check, activation, and CPU rollback.
+- **Hardware verification pending:** these changes do not establish that the
+  owner's installed driver/runtime can run Kokoro or that GPU inference is faster.
+  Run the documented check and normal read-aloud on the RX 7900 XT before marking
+  GPU support verified. Whisper and the TUI controls retain their existing paths.

@@ -95,7 +95,12 @@ plugin requires closing and reopening the TUI; `/reload` alone is not sufficient
   `$XDG_RUNTIME_DIR/tui-voice/tts.sock`. The existing ASR warm worker serves
   Whisper over `$XDG_RUNTIME_DIR/firewatch-asr/asr.sock`.
 - The plugin starts both workers in the background at setup and before dictation
-  or read-aloud. Warm requests fall back to the cold service path on any error.
+  or read-aloud. ASR and default CPU TTS retain the cold service fallback.
+  Explicit `TUI_VOICE_TTS_PROVIDER=migraphx` must fail when GPU TTS is unavailable,
+  including when a stale CPU worker is still running.
+- AMD GPU TTS uses the existing Kokoro ONNX worker and local AF_UNIX transport.
+  Follow [`docs/AMD_GPU.md`](docs/AMD_GPU.md); preserve SHA-256 verification of all
+  model-manifest entries. Do not treat missing `/dev/kfd` as a WSL GPU check.
 - Settings are stored under the `tui-voice` key and apply globally.
 - Dictation is queued if the session is replying; read-aloud is a separate queued
   speech path.
@@ -113,6 +118,11 @@ plugin requires closing and reopening the TUI; `/reload` alone is not sufficient
   playback, and resumes the interrupted reply on unmute.
 - `voice_helper.py warm --status` reports a CPU ASR worker and a TTS worker; a
   fixture transcript and `say --no-play` report `warm_chunks`.
+- For explicit MIGraphX TTS, run `tts_worker.py --check` with the configured TTS
+  interpreter and inspect actual GPU node execution in the profiling summary.
+  A registered provider alone is insufficient. Restart the TTS worker after
+  changing its provider, model, or interpreter. Record hardware results honestly;
+  source-level checks cannot establish RX 7900 XT acceleration or speed.
 - Read-aloud On speaks a completed assistant reply; Off stays silent.
 - `voice_helper.py devices` lists the real Windows input (Focusrite before the
   virtual Steam microphone).

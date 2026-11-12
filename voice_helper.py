@@ -25,6 +25,8 @@ import time
 import traceback
 import wave
 
+from tts_worker import CPU_PROVIDER, requested_provider, startup_timeout, validate_backend
+
 SERVICE = Path(os.environ.get('TUI_VOICE_SERVICE', str(Path.home() / 'repos/fire-tv-next/lulu-launcher/service')))
 VOICE_DIR = Path(os.environ.get('TUI_VOICE_VOICE_DIR', str(SERVICE.parent / 'voice')))
 HERE = Path(__file__).resolve().parent
@@ -357,8 +359,8 @@ def _frame_in(connection):
     return json.loads(_recv_exact(connection, size))
 
 
-def worker_request(path, request, timeout=180, quiet=False):
-    """Talk to a warm worker. Returns None when it is absent or rejects the request."""
+def worker_request(path, request, timeout=180, quiet=False, required=False):
+    """Talk to a worker; required=True raises instead of allowing cold fallback."""
     try:
         import socket
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
@@ -368,12 +370,16 @@ def worker_request(path, request, timeout=180, quiet=False):
             _frame(connection, request)
             response = _frame_in(connection)
     except (OSError, ValueError, ConnectionError) as error:
+        if required:
+            raise RuntimeError(f'Required TTS worker unavailable at {path}: {error}') from error
         if not quiet:
             print(f'Warm worker unavailable at {path} ({error}); using cold path', file=sys.stderr)
             log_event('warning', 'warm worker unavailable', socket=str(path), detail=str(error))
         return None
     if not isinstance(response, dict) or response.get('ok') is not True:
         detail = response.get('error') if isinstance(response, dict) else 'malformed response'
+        if required:
+            raise RuntimeError(f'Required TTS worker rejected request: {detail}')
         if not quiet:
             print(f'Warm worker rejected request ({detail}); using cold path', file=sys.stderr)
             log_event('warning', 'warm worker rejected request', socket=str(path), detail=str(detail))
@@ -393,9 +399,14 @@ def warm_transcribe(encoded):
 
 
 def warm_speak(text, voice_id):
-    result = worker_request(tts_socket(), {'operation': 'speak', 'text': text, 'voice': voice_id})
+    required = requested_provider() != CPU_PROVIDER
+    result = worker_request(tts_socket(), {'operation': 'speak', 'text': text, 'voice': voice_id},
+                            required=required)
     if result is None or not isinstance(result.get('wav'), str):
+        if required:
+            raise RuntimeError('Required TTS worker returned no audio; CPU fallback is disabled')
         return None
+    validate_backend(result)
     return result
 
 
@@ -425,7 +436,13 @@ def warm_lock():
 def start_worker(kind, idle_seconds=None):
     with warm_lock():
         path = asr_socket() if kind == 'asr' else tts_socket()
-        if worker_request(path, {'operation': 'status'}, timeout=3, quiet=True) is not None:
+        status = worker_request(path, {'operation': 'status'}, timeout=3, quiet=True)
+        if status is not None:
+            if kind == 'tts':
+                try:
+                    validate_backend(status)
+                except (RuntimeError, ValueError) as error:
+                    return {'ok': False, 'error': str(error)}
             return {'ok': True, 'state': 'already running', 'socket': str(path)}
         python = ASR_PYTHON if kind == 'asr' else TTS_PYTHON
         script = ASR_WORKER if kind == 'asr' else TTS_WORKER
@@ -440,7 +457,8 @@ def start_worker(kind, idle_seconds=None):
         command = [str(python), str(script), '--start', '--socket', str(path),
                    '--idle-seconds', str(idle), '--threads', str(threads)]
         try:
-            completed = subprocess.run(command, capture_output=True, text=True, timeout=45)
+            timeout = startup_timeout() + 15 if kind == 'tts' else 45
+            completed = subprocess.run(command, capture_output=True, text=True, timeout=timeout)
         except (OSError, subprocess.TimeoutExpired) as error:
             log_event('error', f'{kind} worker start failed', detail=str(error))
             return {'ok': False, 'error': f'{kind} worker start failed: {error}'}
@@ -630,8 +648,17 @@ def say(text, voice_id='heart', should_play=True, start_chunk=0, progress_file=N
     text = str(text or '').strip()
     if not text:
         fail('Nothing to speak')
+    if requested_provider() != CPU_PROVIDER:
+        # Wait for background GPU prewarming (or restore an idle-exited worker)
+        # before requesting audio. Never silently switch an explicit GPU request
+        # to the cold CPU service.
+        started = start_worker('tts')
+        if not started['ok']:
+            fail(started.get('error', 'TTS worker stopped before becoming ready'))
     engine = None
     warmed = 0
+    engines = set()
+    providers = set()
     directory = windows_temp()
     spoken = 0
     parts = chunks(text)
@@ -652,6 +679,9 @@ def say(text, voice_id='heart', should_play=True, start_chunk=0, progress_file=N
                 if engine is None:
                     engine = voice()
                 result = engine.speak(chunk, voice_id)
+            if result.get('engine'):
+                engines.add(result['engine'])
+            providers.update(result.get('providers', []))
             path = directory / ('tui-voice-reply-' + str(os.getpid()) + '-' + str(index) + '.wav')
             path.write_bytes(base64.b64decode(result['wav']))
             spoken += 1
@@ -662,9 +692,10 @@ def say(text, voice_id='heart', should_play=True, start_chunk=0, progress_file=N
             except OSError:
                 pass
     except Exception as error:
-        fail('Local speech failed: ' + str(error))
+        fail('Local speech failed: ' + str(error), traceback=traceback.format_exc())
     return {'ok': True, 'voice': voice_id, 'chunks': spoken, 'played': bool(should_play),
-            'start': start_chunk, 'total': len(parts), 'warm_chunks': warmed}
+            'start': start_chunk, 'total': len(parts), 'warm_chunks': warmed,
+            'engines': sorted(engines), 'providers': sorted(providers)}
 
 
 def main():

@@ -313,11 +313,15 @@ function speakReply(context: any, text: string, options?: {startChunk?: number; 
         "say", "--text", text, "--voice", voice,
         "--start-chunk", String(startChunk),
         "--progress-file", SPEECH_PROGRESS,
-      ], 240000, process => { speechChild = process })
+      ], process.env.TUI_VOICE_TTS_PROVIDER?.trim().toLowerCase() === "migraphx" ? 600000 : 240000,
+      process => { speechChild = process })
       interruptedSpeech = null
-    } catch (error) {
+    } catch (error: any) {
       if (speechState === state) logError("read-aloud", error)
       // A mute/interrupt keeps interruptedSpeech for resume.
+      if (speechState === state && readAloudEnabled()) {
+        toast(context, error?.message || "Local read-aloud failed.", "error")
+      }
     } finally {
       if (speechState === state) speechState = null
     }

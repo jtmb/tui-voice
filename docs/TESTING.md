@@ -1,8 +1,15 @@
 # Testing
 
-There is no automated test framework yet. Verification is a small helper check
-plus a fresh-TUI gate. Reuse these checks; do not build recursive test
-infrastructure for this plugin.
+Run the focused provider/fallback regression checks with the standard library:
+
+```bash
+python3 -m unittest discover -s tests -v
+```
+
+These checks do not require model downloads or GPU hardware, and do not establish
+that Kokoro runs on the owner's GPU. For that, use the actual inference/profile
+check in [AMD_GPU.md](AMD_GPU.md), then the helper and fresh-TUI gates below.
+Reuse these checks; do not build recursive test infrastructure for this plugin.
 
 ## Helper checks
 

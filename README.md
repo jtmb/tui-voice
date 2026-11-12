@@ -136,8 +136,9 @@ The plugin depends on the existing local voice stack:
 | Windows ffmpeg | WinGet Gyan.FFmpeg auto-discovery | `TUI_VOICE_FFMPEG` |
 | Microphone | automatic | `TUI_VOICE_MIC` |
 
-Warm workers are optional. If either is absent or fails, the helper uses the
-unchanged cold local path. Manage them with:
+Warm workers are optional in the default CPU configuration. If either is absent
+or fails, the helper uses the cold local path. Explicit GPU selection reports an
+error instead of silently running TTS on the CPU. Manage workers with:
 
 ```bash
 ~/repos/fire-tv-next/lulu-launcher/service/.venv/bin/python voice_helper.py warm --status
@@ -147,6 +148,20 @@ unchanged cold local path. Manage them with:
 
 Both keep audio local and exit after 30 idle minutes; the plugin starts them again
 before the next dictation or reply.
+
+### AMD GPU read-aloud on WSL2
+
+Kokoro can request AMD's `MIGraphXExecutionProvider` with
+`TUI_VOICE_TTS_PROVIDER=migraphx`; `cpu` remains the default. GPU mode selects
+`kokoro-v1.0.onnx` (FP32) and requires a matching ROCm/MIGraphX installation in the
+TTS worker's Python environment. The selected model and voice bundle must be
+pinned in the existing local model manifest.
+
+Follow [`docs/AMD_GPU.md`](docs/AMD_GPU.md) for RX 7900 XT setup, model preparation,
+worker restart, and a real inference check. GPU availability is checked through
+WSL's `/dev/dxg` and the AMD runtime. **RX 7900 XT synthesis has not yet been
+verified on the owner's machine.** Whisper dictation continues using its current
+CPU worker.
 
 ## Privacy
 
@@ -218,4 +233,5 @@ footer button, and a physical dictation queued behind a live model turn. See
 - [`AGENTS.md`](AGENTS.md) — agent rules and verification checklist
 - [`rules.md`](rules.md) — current product contract
 - [`HANDOFF.md`](HANDOFF.md) — current state, evidence, limits
+- [`docs/AMD_GPU.md`](docs/AMD_GPU.md) — AMD GPU setup and inference verification on WSL2
 - [`docs/`](docs/README.md) — architecture, settings, testing, troubleshooting, runbook

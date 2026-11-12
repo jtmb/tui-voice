@@ -85,7 +85,7 @@ current session check + read-aloud setting
         ▼
 speechQueue → voice_helper.py say
   warm TTS chunk request → Kokoro WAV → Windows speakers
-  cold service fallback if the worker is absent
+  cold service fallback in CPU mode; explicit GPU mode reports failure
 ```
 
 - Only completed assistant text for the currently open session is spoken.
@@ -108,7 +108,7 @@ restored before the model is needed.
 | Worker | Model | Socket | Idle exit |
 | --- | --- | --- | --- |
 | ASR | Whisper `base.en` int8, 8 CPU threads | `$XDG_RUNTIME_DIR/firewatch-asr/asr.sock` | 30 min |
-| TTS | Kokoro `v1.0.int8`, 8 CPU threads | `$XDG_RUNTIME_DIR/tui-voice/tts.sock` | 30 min |
+| TTS | Kokoro INT8 on CPU by default; FP32 with explicitly selected MIGraphX | `$XDG_RUNTIME_DIR/tui-voice/tts.sock` | 30 min |
 
 - Sockets are AF_UNIX, mode `0600`, inside a uid-owned `0700` directory. Only the
   same user can connect.
@@ -116,15 +116,22 @@ restored before the model is needed.
   cannot race a busy worker.
 - `voice_helper.py warm --start|--status|--stop` manages both. Starts are
   serialized with a lock file.
-- Warm requests fall back to the unchanged cold service path on any error. The
-  cold path still works with no worker running.
+- ASR and default CPU TTS requests retain the cold service fallback. With
+  `TUI_VOICE_TTS_PROVIDER=migraphx`, a missing/failed GPU worker or an older CPU
+  worker produces an error; it cannot silently enter the cold CPU TTS path.
 - Replies are split into ~420-character chunks before synthesis, so the first
   audio starts sooner, mute/resume is more precise, and one long ONNX request
   cannot inflate worker memory.
 - The TTS worker disables the ORT CPU memory arena for the same reason; measured
   RSS stayed near 300 MB across repeated long replies.
-- The workers are CPU-only. WSL exposes no ROCm/CUDA device for this AMD host, so
-  GPU acceleration is not silently attempted.
+- TTS selects its ONNX execution provider explicitly. CPU remains the default;
+  MIGraphX requires AMD's compatible runtime and a successful GPU inference
+  check. Under WSL, GPU compute uses `/dev/dxg`; absent `/dev/kfd` or `/dev/dri`
+  does not establish that an RX 7900 XT is unavailable. See
+  [AMD GPU setup](AMD_GPU.md) and [AMD's WSL guide](https://rocm.docs.amd.com/projects/radeon-ryzen/en/docs-7.2.1/docs/install/installrad/wsl/howto_wsl.html).
+- The selected ONNX model and `voices-v1.0.bin` must have SHA-256 entries in the
+  existing `VOICE_DIR/neural-models.json`. Every manifest entry is still checked
+  at startup. No inference path downloads models or packages.
 
 
 ## Settings
@@ -158,6 +165,8 @@ footer with keyboard hints. It is not a full-screen route.
 | Python with the service | service `.venv/bin/python` | `TUI_VOICE_PYTHON` |
 | Warm ASR Python | `VOICE_DIR/.asr-venv/bin/python` | `TUI_VOICE_ASR_PYTHON` |
 | Warm TTS Python | `VOICE_DIR/.venv/bin/python` | `TUI_VOICE_TTS_PYTHON` |
+| TTS execution provider | `cpu`; opt in with `migraphx` | `TUI_VOICE_TTS_PROVIDER` |
+| TTS model | CPU: `kokoro-v1.0.int8.onnx`; MIGraphX: `kokoro-v1.0.onnx` | `TUI_VOICE_TTS_MODEL` (absolute or relative to `VOICE_DIR/models`) |
 | Worker idle lifetime | 1800 seconds | `TUI_VOICE_WARM_IDLE` |
 | ASR worker threads | 8 | `TUI_VOICE_ASR_THREADS` |
 | TTS worker threads | 8 | `TUI_VOICE_TTS_THREADS` |
