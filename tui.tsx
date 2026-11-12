@@ -21,8 +21,10 @@ let child: ChildProcess | null = null
 let pendingDraft: {sessionID: string; text: string} | null = null
 let pendingFlush = false
 let speechQueue: Promise<void> = Promise.resolve()
+let speechChild: ChildProcess | null = null
 let lastSession = ""
 let onToggle: () => void = () => {}
+let onMute: () => void = () => {}
 
 function phaseLabel() {
   return phase() === "idle" ? "Voice" : phase() === "transcribing" ? "Transcribing"
@@ -40,11 +42,12 @@ function toast(context: any, message: string, variant: "info" | "success" | "war
   context.ui.toast.show({message, variant, duration: 3500})
 }
 
-function helperPayload(args: string[], timeoutMs: number): Promise<any> {
+function helperPayload(args: string[], timeoutMs: number, track?: (child: ChildProcess | null) => void): Promise<any> {
   return new Promise((resolve, reject) => {
     if (!PYTHON) { reject(new Error("TUI_VOICE_PYTHON is not configured")); return }
     const childProcess = spawn(PYTHON, [HELPER, ...args], {stdio: ["ignore", "pipe", "pipe"]})
     child = childProcess
+    track?.(childProcess)
     let stdout = ""
     let stderr = ""
     const timer = setTimeout(() => {
@@ -56,11 +59,13 @@ function helperPayload(args: string[], timeoutMs: number): Promise<any> {
     childProcess.on("error", error => {
       clearTimeout(timer)
       if (child === childProcess) child = null
+      track?.(null)
       reject(error)
     })
     childProcess.on("close", code => {
       clearTimeout(timer)
       if (child === childProcess) child = null
+      track?.(null)
       let payload: any = null
       try { payload = JSON.parse(stdout.trim().split("\n").at(-1) || "{}") } catch {}
       if (payload?.ok === false) { reject(new Error(payload.error || "Voice helper failed")); return }
@@ -82,6 +87,13 @@ function stopVoice() {
   if (child) {
     try { child.kill("SIGTERM") } catch {}
     child = null
+  }
+}
+
+function stopSpeech() {
+  if (speechChild) {
+    try { speechChild.kill("SIGTERM") } catch {}
+    speechChild = null
   }
 }
 
@@ -205,12 +217,20 @@ async function toggleVoice(context: any) {
   }
 }
 
+async function toggleMute(context: any) {
+  const currently = readAloudEnabled()
+  if (currently) stopSpeech()
+  await saveSetting("readAloud", !currently)
+  toast(context, currently ? "Read-aloud muted." : "Read-aloud on.", currently ? "info" : "success")
+}
+
 function speakReply(context: any, text: string) {
   speechQueue = speechQueue.then(async () => {
     if (!readAloudEnabled()) return
     while (active()) await delay(250)
     try {
-      await helperPayload(["say", "--text", text, "--voice", settings.voice || "heart"], 240000)
+      await helperPayload(["say", "--text", text, "--voice", settings.voice || "heart"], 240000,
+        process => { speechChild = process })
     } catch {}
   }).catch(() => {})
 }
@@ -558,6 +578,27 @@ function VoiceButton(props: {sessionID?: string}) {
   )
 }
 
+function MuteButton() {
+  let lastAction = 0
+  const activate = () => {
+    const now = Date.now()
+    if (now - lastAction < 500) return
+    lastAction = now
+    onMute()
+  }
+  return (
+    <box focusable={true} onMouseDown={activate} onMouseUp={activate}
+      onKeyDown={(key: any) => { if (key?.name === "return" || key?.name === "space") activate() }}
+      paddingLeft={2} paddingRight={2}
+      backgroundColor={readAloudEnabled() ? "#15384a" : "#3a2d1e"}>
+      <text fg={readAloudEnabled() ? "#3ca9e8" : "#f4b65f"}
+        onMouseDown={activate} onMouseUp={activate}>
+        ◉ {readAloudEnabled() ? "Mute" : "Unmute"}
+      </text>
+    </box>
+  )
+}
+
 export default Plugin.define({
   id: "tui.voice",
   async setup(context) {
@@ -567,6 +608,7 @@ export default Plugin.define({
     settings = stored as Settings
     updateSettings = update
     onToggle = () => { void toggleVoice(context) }
+    onMute = () => { void toggleMute(context) }
     context.ui.toast.show({title: "tui-voice", message: "Ready · F9 or Ctrl+Alt+V", variant: "info", duration: 3000})
 
     const stopText = context.data.on("session.text.ended", (event: any) => {
@@ -578,7 +620,12 @@ export default Plugin.define({
 
     const offFooter = context.ui.slot({
       append: "prompt.footer",
-      render: input => <VoiceButton sessionID={input.sessionID} />,
+      render: input => (
+        <box flexDirection="row" gap={1}>
+          <VoiceButton sessionID={input.sessionID} />
+          <MuteButton />
+        </box>
+      ),
     })
 
     context.keymap.layer(() => ({
@@ -609,6 +656,22 @@ export default Plugin.define({
           run: () => chooseMic(context),
         },
         {
+          id: "tui.voice.mute",
+          title: "Voice: Mute/unmute read-aloud",
+          group: "Voice",
+          bind: "ctrl+alt+m",
+          palette: true,
+          run: () => toggleMute(context),
+        },
+        {
+          id: "tui.voice.mute.alt",
+          title: "Voice: Mute/unmute read-aloud (F10)",
+          group: "Voice",
+          bind: "f10",
+          palette: false,
+          run: () => toggleMute(context),
+        },
+        {
           id: "tui.voice.settings",
           title: "Voice: Settings",
           group: "Voice",
@@ -622,6 +685,7 @@ export default Plugin.define({
     return () => {
       stopText()
       offFooter()
+      stopSpeech()
       stopVoice()
     }
   },

@@ -9,6 +9,8 @@ requirements remain.
 - The `◉ Voice` button lives in the **bottom footer** of a chat session.
 - Do not move it to the composer, a floating overlay, a full-screen route, or a
   different corner.
+- The `◉ Mute` / `◉ Unmute` button sits next to Voice in the same bottom footer.
+  It toggles read-aloud and immediately stops current playback. Do not move it.
 - The settings screen is a **native-sized OpenCode dialog** (`large`, centered),
   not a full-screen page, and uses the active theme's dialog surface and native
   selected-row colors.
@@ -31,6 +33,8 @@ requirements remain.
 - It speaks completed assistant replies through the local Kokoro model and Windows
   speakers. No cloud speech.
 - The local voice is selectable: Heart, Velvet, English Rose, Dora.
+- The footer Mute/Unmute button is the quick control; it must stop the active
+  `say` process, not just hide the label.
 - It must remain functional; do not silently remove it or move it to another
   surface.
 
