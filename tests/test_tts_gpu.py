@@ -4,6 +4,7 @@ from contextlib import redirect_stdout, redirect_stderr
 import hashlib
 import io
 import json
+import math
 import os
 from pathlib import Path
 import signal
@@ -17,6 +18,7 @@ import wave
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import tts_worker as worker
+_ENGINE_TYPE = worker.KokoroEngine
 
 # Importing the CLI helper must not replace the test runner's signal handlers.
 _signals = {sig: signal.getsignal(sig) for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGUSR1)}
@@ -161,28 +163,137 @@ class TtsGpuTests(unittest.TestCase):
             {'cat': 'Node', 'dur': 10, 'args': {}},
         ]))
         self.assertEqual(worker.profile_summary(path), {
-            worker.CPU_PROVIDER: {'node_events': 2, 'duration_us': 12}})
+            worker.CPU_PROVIDER: {'node_events': 2, 'compute_node_events': 0,
+                                  'duration_us': 12, 'compute_ops': []}})
 
-    def test_check_cannot_claim_gpu_without_observed_gpu_execution(self):
-        trace = self.root / 'trace.json'
-        trace.write_text(json.dumps([
-            {'cat': 'Node', 'dur': 5, 'args': {'provider': worker.CPU_PROVIDER}}]))
+    def profile_engine(self, path, events):
+        """An engine with an ORT-shaped trace, without optional model dependencies."""
+        path.write_text(json.dumps(events))
         audio = io.BytesIO()
         with wave.open(audio, 'wb') as wav:
             wav.setnchannels(1)
             wav.setsampwidth(2)
             wav.setframerate(24000)
             wav.writeframes(b'\0\0' * 24000)
-        engine = SimpleNamespace(
-            provider=worker.GPU_PROVIDER,
-            session=SimpleNamespace(end_profiling=lambda: str(trace)),
-            describe=lambda: {'providers': [worker.GPU_PROVIDER, worker.CPU_PROVIDER]},
-            speak=lambda *_: {'wav': base64.b64encode(audio.getvalue()).decode()},
-        )
+        engine = _ENGINE_TYPE.__new__(_ENGINE_TYPE)
+        engine.provider = worker.GPU_PROVIDER
+        engine.model = worker.selected_model()
+        engine.model_sha256 = 'a' * 64
+        engine.session_id = 'test-session'
+        engine.ort_version = 'test'
+        engine.profiling_active = True
+        engine.execution_profile = {}
+        engine.gpu_execution_verified = False
+        engine.session = SimpleNamespace(
+            get_providers=lambda: [worker.GPU_PROVIDER, worker.CPU_PROVIDER],
+            end_profiling=Mock(return_value=str(path)))
+        engine.speak = Mock(return_value={'wav': base64.b64encode(audio.getvalue()).decode()})
+        return engine
+
+    @staticmethod
+    def kernel_event(provider, operation, name='model_kernel_time'):
+        return {'cat': 'Node', 'name': name, 'ph': 'X', 'dur': 5,
+                'args': {'provider': provider, 'op_name': operation}}
+
+    def test_check_cannot_claim_gpu_without_observed_gpu_execution(self):
+        trace = self.root / 'trace.json'
+        engine = self.profile_engine(trace, [self.kernel_event(worker.CPU_PROVIDER, 'Conv')])
         with patch.object(worker, 'KokoroEngine', return_value=engine):
             result = worker.check_engine(8)
         self.assertFalse(result['ok'])
         self.assertFalse(result['gpu_execution_verified'])
+        self.assertTrue(result['timings_profiled'])
+        self.assertFalse(result['profiling_active'])
+
+    def test_gpu_startup_requires_computation_even_without_optional_warmup(self):
+        os.environ['TUI_VOICE_TTS_PROVIDER'] = 'migraphx'
+        cases = {
+            'all_cpu': [self.kernel_event(worker.CPU_PROVIDER, 'Conv')],
+            'copy_only': [self.kernel_event(worker.GPU_PROVIDER, 'MemcpyFromHost'),
+                          self.kernel_event(worker.CPU_PROVIDER, 'Conv')],
+            'fence_only': [self.kernel_event(worker.GPU_PROVIDER, 'MGXKernel_graph_0',
+                                             name='model_fence_before')],
+        }
+        for name, events in cases.items():
+            with self.subTest(name=name):
+                engine = self.profile_engine(self.root / 'trace.json', events)
+                with patch.object(worker, 'KokoroEngine', return_value=engine), \
+                     patch.object(worker, 'serve') as serve, \
+                     patch.object(worker.signal, 'signal'), \
+                     patch.object(sys, 'argv', ['tts_worker.py', '--run', '--no-warmup',
+                                               '--socket', str(self.root / 'run/tts.sock')]):
+                    with self.assertRaisesRegex(RuntimeError, 'no GPU model computation'):
+                        worker.main()
+                engine.speak.assert_called_once_with(worker.VERIFICATION_TEXT, 'heart')
+                engine.session.end_profiling.assert_called_once()
+                serve.assert_not_called()
+                self.assertFalse(engine.gpu_execution_verified)
+                self.assertFalse(engine.profiling_active)
+
+    def test_verified_startup_keeps_the_session_and_removes_profile_overhead(self):
+        os.environ['TUI_VOICE_TTS_PROVIDER'] = 'migraphx'
+        captured = {}
+
+        def construct(_threads, profile_prefix):
+            trace = profile_prefix.with_suffix('.json')
+            engine = self.profile_engine(trace, [
+                self.kernel_event(worker.GPU_PROVIDER, 'MemcpyToHost'),
+                self.kernel_event(worker.GPU_PROVIDER, 'MGXKernel_graph_0'),
+                self.kernel_event(worker.CPU_PROVIDER, 'Shape'),
+            ])
+            captured.update(engine=engine, trace=trace, session=engine.session)
+            return engine
+
+        with patch.object(worker, 'KokoroEngine', side_effect=construct):
+            engine = worker.prepare_engine(8, warmup=False)
+        self.assertIs(engine, captured['engine'])
+        self.assertIs(engine.session, captured['session'])
+        self.assertFalse(captured['trace'].parent.exists())
+        metadata = engine.describe()
+        self.assertTrue(metadata['gpu_execution_verified'])
+        self.assertFalse(metadata['profiling_active'])
+        self.assertEqual(metadata['model_sha256'], 'a' * 64)
+        self.assertEqual(metadata['session_id'], 'test-session')
+        gpu = metadata['execution_profile'][worker.GPU_PROVIDER]
+        self.assertEqual(gpu['node_events'], 2)
+        self.assertEqual(gpu['compute_node_events'], 1)
+        self.assertEqual(gpu['compute_ops'], ['MGXKernel_graph_0'])
+        worker.validate_backend(metadata)
+        engine.speak('A production request.', 'heart')
+        engine.session.end_profiling.assert_called_once()
+
+    def test_helper_rejects_gpu_provider_without_live_execution_proof(self):
+        os.environ['TUI_VOICE_TTS_PROVIDER'] = 'migraphx'
+        metadata = {'wav': 'YQ==', 'requested_provider': worker.GPU_PROVIDER,
+                    'providers': [worker.GPU_PROVIDER, worker.CPU_PROVIDER],
+                    'model': str(worker.selected_model())}
+        for proof in (None, False, 1, True):
+            result = dict(metadata)
+            if proof is not None:
+                result['gpu_execution_verified'] = proof
+            with self.subTest(proof=proof), \
+                 patch.object(helper, 'worker_request', return_value=result):
+                if proof is True:
+                    self.assertIs(helper.warm_speak('Hello.', 'heart'), result)
+                else:
+                    with self.assertRaisesRegex(RuntimeError, 'not verified GPU'):
+                        helper.warm_speak('Hello.', 'heart')
+
+    def test_bad_model_audio_is_rejected_before_pcm_conversion(self):
+        engine = worker.KokoroEngine.__new__(worker.KokoroEngine)
+        engine.voices = {'heart': {'model': 'af_heart', 'speed': 1, 'lang': 'en-us'}}
+        for values in ([], [float('nan')], [float('inf')], [-float('inf')]):
+            with self.subTest(values=values):
+                array = SimpleNamespace(ndim=1, size=len(values))
+                engine.np = SimpleNamespace(
+                    asarray=lambda _samples: array,
+                    isfinite=lambda _samples: SimpleNamespace(
+                        all=lambda: all(math.isfinite(x) for x in values)),
+                    clip=Mock())
+                engine.kokoro = SimpleNamespace(create=lambda *_args, **_kwargs: (values, 24000))
+                with self.assertRaisesRegex(ValueError, 'empty, non-finite'):
+                    engine.speak('Hello.', 'heart')
+                engine.np.clip.assert_not_called()
 
     def test_gpu_rejects_legacy_cpu_and_missing_audio_responses(self):
         os.environ['TUI_VOICE_TTS_PROVIDER'] = 'migraphx'
@@ -223,6 +334,43 @@ class TtsGpuTests(unittest.TestCase):
                 with self.assertRaises(SystemExit) as failure:
                     helper.main()
                 self.assertEqual(failure.exception.code, 0 if ok else 1)
+
+    def test_successful_spawn_does_not_accept_unverified_gpu_status(self):
+        os.environ['TUI_VOICE_TTS_PROVIDER'] = 'migraphx'
+        os.environ['TUI_VOICE_TTS_SOCKET'] = str(self.root / 'runtime/tts.sock')
+        status = {'requested_provider': worker.GPU_PROVIDER,
+                  'providers': [worker.GPU_PROVIDER, worker.CPU_PROVIDER],
+                  'model': str(worker.selected_model()), 'gpu_execution_verified': False}
+        completed = SimpleNamespace(returncode=0, stdout='', stderr='')
+        with patch.object(helper, 'worker_request', side_effect=[None, status]), \
+             patch.object(helper, 'TTS_PYTHON', Path(sys.executable)), \
+             patch.object(helper, 'TTS_WORKER', Path(worker.__file__)), \
+             patch.object(helper.subprocess, 'run', return_value=completed):
+            result = helper.start_worker('tts')
+        self.assertFalse(result['ok'])
+        self.assertIn('not verified GPU', result['error'])
+
+    def test_say_retains_verified_live_backend_evidence(self):
+        os.environ['TUI_VOICE_TTS_PROVIDER'] = 'migraphx'
+        audio = io.BytesIO()
+        with wave.open(audio, 'wb') as wav:
+            wav.setnchannels(1)
+            wav.setsampwidth(2)
+            wav.setframerate(24000)
+            wav.writeframes(b'\0\0' * 240)
+        backend = {'requested_provider': worker.GPU_PROVIDER,
+                   'providers': [worker.GPU_PROVIDER, worker.CPU_PROVIDER],
+                   'model': str(worker.selected_model()), 'model_sha256': 'a' * 64,
+                   'session_id': 'live-session', 'gpu_execution_verified': True}
+        response = {**backend, 'wav': base64.b64encode(audio.getvalue()).decode('ascii')}
+        with patch.object(helper, 'start_worker', return_value={'ok': True}), \
+             patch.object(helper, 'worker_request', return_value=response), \
+             patch.object(helper, 'windows_temp', return_value=self.root):
+            result = helper.say('Hello.', should_play=False)
+        self.assertEqual(result['warm_chunks'], 1)
+        self.assertIs(result['gpu_execution_verified'], True)
+        self.assertEqual(result['backends'], [backend])
+        self.assertFalse(list(self.root.glob('*.wav')))
 
     def test_gpu_startup_crash_hint_is_actionable(self):
         os.environ['TUI_VOICE_TTS_PROVIDER'] = 'migraphx'

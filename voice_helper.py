@@ -466,7 +466,14 @@ def start_worker(kind, idle_seconds=None):
             detail = (completed.stderr or completed.stdout or '').strip()[-400:]
             log_event('error', f'{kind} worker start failed', detail=detail)
             return {'ok': False, 'error': f'{kind} worker start failed: {detail}'}
-        running = worker_request(path, {'operation': 'status'}, timeout=3, quiet=True) is not None
+        status = worker_request(path, {'operation': 'status'}, timeout=3, quiet=True)
+        running = status is not None
+        if running and kind == 'tts':
+            try:
+                validate_backend(status)
+            except (RuntimeError, ValueError) as error:
+                log_event('error', 'TTS worker failed readiness validation', detail=str(error))
+                return {'ok': False, 'error': str(error), 'socket': str(path)}
         if not running:
             log_event('error', f'{kind} worker did not answer after start', socket=str(path))
         return {'ok': running, 'state': 'started' if running else 'not running',
@@ -659,6 +666,8 @@ def say(text, voice_id='heart', should_play=True, start_chunk=0, progress_file=N
     warmed = 0
     engines = set()
     providers = set()
+    backends = {}
+    gpu_verified = requested_provider() != CPU_PROVIDER
     directory = windows_temp()
     spoken = 0
     parts = chunks(text)
@@ -682,6 +691,14 @@ def say(text, voice_id='heart', should_play=True, start_chunk=0, progress_file=N
             if result.get('engine'):
                 engines.add(result['engine'])
             providers.update(result.get('providers', []))
+            gpu_verified = gpu_verified and result.get('gpu_execution_verified') is True
+            if result.get('session_id'):
+                backends[result['session_id']] = {
+                    key: result[key] for key in (
+                        'session_id', 'requested_provider', 'model', 'model_sha256',
+                        'providers', 'gpu_execution_verified', 'execution_profile')
+                    if key in result
+                }
             path = directory / ('tui-voice-reply-' + str(os.getpid()) + '-' + str(index) + '.wav')
             path.write_bytes(base64.b64decode(result['wav']))
             spoken += 1
@@ -695,7 +712,9 @@ def say(text, voice_id='heart', should_play=True, start_chunk=0, progress_file=N
         fail('Local speech failed: ' + str(error), traceback=traceback.format_exc())
     return {'ok': True, 'voice': voice_id, 'chunks': spoken, 'played': bool(should_play),
             'start': start_chunk, 'total': len(parts), 'warm_chunks': warmed,
-            'engines': sorted(engines), 'providers': sorted(providers)}
+            'engines': sorted(engines), 'providers': sorted(providers),
+            'gpu_execution_verified': bool(spoken and gpu_verified),
+            'backends': list(backends.values())}
 
 
 def main():

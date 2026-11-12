@@ -30,6 +30,7 @@ import sys
 import tempfile
 import threading
 import time
+import uuid
 import wave
 
 VOICE_DIR = Path(os.environ.get(
@@ -44,6 +45,7 @@ START_TIMEOUT = 30.0
 CPU_PROVIDER = 'CPUExecutionProvider'
 GPU_PROVIDER = 'MIGraphXExecutionProvider'
 WORKER_BUSY_EXIT = 75
+VERIFICATION_TEXT = 'This is a local Kokoro speech execution check.'
 
 
 class WorkerBusy(RuntimeError):
@@ -80,6 +82,10 @@ def validate_backend(result):
             or result.get('model') != str(selected_model())):
         raise RuntimeError(
             'TTS worker does not match the requested provider/model; '
+            'run voice_helper.py warm --restart --kind tts with the same environment')
+    if expected == GPU_PROVIDER and result.get('gpu_execution_verified') is not True:
+        raise RuntimeError(
+            'TTS worker has not verified GPU model execution; '
             'run voice_helper.py warm --restart --kind tts with the same environment')
 
 
@@ -130,7 +136,7 @@ def create_session(ort, model, threads, profile_prefix=None):
         raise RuntimeError(f'{provider} was requested but the session loaded {session.get_providers()}')
     if provider != CPU_PROVIDER:
         # Prevent whole-session CPU retries after GPU errors. Unsupported graph
-        # nodes may still use CPU; --check measures actual provider execution.
+        # nodes may still use CPU; startup verifies actual model computation.
         session.disable_fallback()
     return session
 
@@ -238,21 +244,27 @@ def worker_lock(path):
 
 def verify_models(model):
     """Verify the pinned voice model identity once at startup, not per request."""
-    required = {Path(model).resolve(), (VOICE_DIR / 'models/voices-v1.0.bin').resolve()}
+    model = Path(model).resolve()
+    required = {model, (VOICE_DIR / 'models/voices-v1.0.bin').resolve()}
     verified = set()
+    model_digest = None
     for item in json.loads((VOICE_DIR / 'neural-models.json').read_text()):
         path = (VOICE_DIR / 'models' / item['file']).resolve()
         digest = hashlib.sha256()
         with path.open('rb') as source:
             for block in iter(lambda: source.read(1024 * 1024), b''):
                 digest.update(block)
-        if digest.hexdigest() != item['sha256']:
+        actual_digest = digest.hexdigest()
+        if actual_digest != item['sha256']:
             raise ValueError(f'Neural voice model hash mismatch: {path.name}')
         verified.add(path)
+        if path == model:
+            model_digest = actual_digest
     missing = required - verified
     if missing:
         names = ', '.join(sorted(str(path) for path in missing))
         raise ValueError(f'Models must be SHA256-pinned in {VOICE_DIR / "neural-models.json"}: {names}')
+    return model_digest
 
 
 class KokoroEngine:
@@ -265,9 +277,13 @@ class KokoroEngine:
         from kokoro_onnx import Kokoro
 
         self.model = selected_model()
-        verify_models(self.model)
+        self.model_sha256 = verify_models(self.model)
         self.provider = requested_provider()
         self.ort_version = ort.__version__
+        self.session_id = uuid.uuid4().hex
+        self.execution_profile = {}
+        self.gpu_execution_verified = False
+        self.profiling_active = profile_prefix is not None
         session = create_session(ort, self.model, threads, profile_prefix)
         self.session = session
         self.np = np
@@ -277,7 +293,23 @@ class KokoroEngine:
     def describe(self):
         return {'requested_provider': self.provider,
                 'providers': self.session.get_providers(),
-                'model': str(self.model), 'onnxruntime_version': self.ort_version}
+                'model': str(self.model), 'model_sha256': self.model_sha256,
+                'session_id': self.session_id, 'onnxruntime_version': self.ort_version,
+                'gpu_execution_verified': self.gpu_execution_verified,
+                'execution_profile': self.execution_profile,
+                'profiling_active': self.profiling_active}
+
+    def record_execution(self, profile):
+        self.execution_profile = profile
+        self.gpu_execution_verified = (
+            profile.get(GPU_PROVIDER, {}).get('compute_node_events', 0) > 0)
+
+    def require_gpu_execution(self):
+        if self.provider == GPU_PROVIDER and not self.gpu_execution_verified:
+            raise RuntimeError(
+                'MIGraphX was requested but no GPU model computation was verified; '
+                'provider registration or memory copies alone are insufficient. '
+                'Run tts_worker.py --check and inspect docs/AMD_GPU.md.')
 
     def speak(self, text, identifier):
         if not isinstance(text, str) or not text.strip() or len(text) > MAX_TEXT:
@@ -287,6 +319,13 @@ class KokoroEngine:
         voice = self.voices[identifier]
         samples, rate = self.kokoro.create(
             text.strip(), voice=voice['model'], speed=voice['speed'], lang=voice['lang'])
+        samples = self.np.asarray(samples)
+        if samples.ndim != 1 or samples.size == 0 or not self.np.isfinite(samples).all():
+            raise ValueError('Kokoro returned empty, non-finite, or non-mono audio')
+        if not isinstance(rate, (int, self.np.integer)) or not 0 < rate <= 192000:
+            raise ValueError('Kokoro returned an invalid sample rate')
+        if samples.size * 2 + 44 > 8 * 1024 * 1024:
+            raise ValueError('Speech output outside finite budget')
         pcm = (self.np.clip(samples, -.98, .98) * 32767).astype('<i2').tobytes()
         output = io.BytesIO()
         with wave.open(output, 'wb') as wav:
@@ -305,16 +344,59 @@ class KokoroEngine:
 
 
 def profile_summary(path):
-    """Count actual provider executions, not just registered provider names."""
+    """Separate model computation from provider registration, copies and fences.
+
+    ORT records executed kernels as Node / <node>_kernel_time events with an
+    op_name. Durations are ORT operator-event times, not hardware GPU timings.
+    """
     summary = {}
     for event in json.loads(Path(path).read_text()):
-        provider = event.get('args', {}).get('provider')
+        args = event.get('args', {})
+        provider = args.get('provider')
         if event.get('cat') != 'Node' or not provider:
             continue
-        entry = summary.setdefault(provider, {'node_events': 0, 'duration_us': 0})
+        entry = summary.setdefault(provider, {
+            'node_events': 0, 'compute_node_events': 0, 'duration_us': 0,
+            'compute_ops': []})
         entry['node_events'] += 1
         entry['duration_us'] += event.get('dur', 0)
+        operation = args.get('op_name', '')
+        name = event.get('name', '')
+        if (not isinstance(operation, str) or not operation
+                or not isinstance(name, str) or not name.endswith('_kernel_time')
+                or event.get('ph', 'X') != 'X'
+                or operation.lower().startswith(('memcpy', 'copy', 'memset'))):
+            continue
+        entry['compute_node_events'] += 1
+        if operation not in entry['compute_ops'] and len(entry['compute_ops']) < 16:
+            entry['compute_ops'].append(operation)
     return summary
+
+
+def _end_profiling(engine):
+    # EndProfiling disables collection on this session. Keep the same session
+    # for serving; constructing another one would discard the verified proof.
+    path = engine.session.end_profiling()
+    engine.profiling_active = False
+    return path
+
+
+def prepare_engine(threads=DEFAULT_THREADS, warmup=True):
+    """Create a ready serving session; GPU proof cannot be skipped by --no-warmup."""
+    if requested_provider() == CPU_PROVIDER:
+        engine = KokoroEngine(threads)
+        if warmup:
+            engine.speak('Ready.', 'heart')
+        return engine
+    with tempfile.TemporaryDirectory(prefix='tui-voice-startup-') as directory:
+        engine = KokoroEngine(threads, profile_prefix=Path(directory) / 'ort')
+        try:
+            engine.speak(VERIFICATION_TEXT, 'heart')
+        finally:
+            profile_path = _end_profiling(engine)
+        engine.record_execution(profile_summary(profile_path))
+        engine.require_gpu_execution()
+        return engine
 
 
 def check_engine(threads):
@@ -325,22 +407,27 @@ def check_engine(threads):
         engine = KokoroEngine(threads, profile_prefix=Path(directory) / 'ort')
         load_seconds = time.perf_counter() - started
         timings = []
-        for _ in range(2):
-            started = time.perf_counter()
-            result = engine.speak('This is a local Kokoro speech performance check.', 'heart')
-            timings.append(time.perf_counter() - started)
-        profile = profile_summary(engine.session.end_profiling())
+        try:
+            for _ in range(2):
+                started = time.perf_counter()
+                result = engine.speak(VERIFICATION_TEXT, 'heart')
+                timings.append(time.perf_counter() - started)
+        finally:
+            profile_path = _end_profiling(engine)
+        profile = profile_summary(profile_path)
+        engine.record_execution(profile)
         with wave.open(io.BytesIO(base64.b64decode(result['wav'])), 'rb') as wav:
             duration = wav.getnframes() / wav.getframerate()
-        gpu_executed = profile.get(GPU_PROVIDER, {}).get('node_events', 0) > 0
+        gpu_executed = engine.gpu_execution_verified
         ok = duration > 0 and (engine.provider == CPU_PROVIDER or gpu_executed)
         return {'ok': ok, **engine.describe(), 'load_s': round(load_seconds, 3),
+                'timings_profiled': True,
                 'first_synthesis_s': round(timings[0], 3),
                 'warm_synthesis_s': round(timings[1], 3),
                 'audio_seconds': round(duration, 3),
                 'warm_real_time_factor': round(timings[1] / duration, 3) if duration else None,
                 'gpu_execution_verified': gpu_executed, 'profile': profile,
-                'error': None if ok else 'No GPU node execution was observed, or audio was empty'}
+                'error': None if ok else 'No GPU model computation was observed, or audio was empty'}
 
 
 def _presets():
@@ -350,6 +437,7 @@ def _presets():
 
 
 def serve(path, engine, idle_seconds=1800):
+    engine.require_gpu_execution()
     path = Path(path)
     _prepare_socket_dir(path)
     if path.exists():
@@ -433,7 +521,8 @@ def main():
     parser.add_argument('--socket', help='AF_UNIX path (default: XDG_RUNTIME_DIR/tui-voice/tts.sock)')
     parser.add_argument('--threads', type=int, default=DEFAULT_THREADS)
     parser.add_argument('--idle-seconds', type=int, default=1800, help='idle exit; 0 = never')
-    parser.add_argument('--no-warmup', action='store_true')
+    parser.add_argument('--no-warmup', action='store_true',
+                        help='skip optional CPU warmup; required GPU verification still runs')
     parser.add_argument('--run', action='store_true', help='run in the foreground')
     parser.add_argument('--start', action='store_true', help='start detached and wait for readiness')
     parser.add_argument('--stop', action='store_true')
@@ -520,9 +609,7 @@ def main():
     signal.signal(signal.SIGINT, stop)
     try:
         with worker_lock(path):
-            engine = KokoroEngine(threads=args.threads)
-            if not args.no_warmup:
-                engine.speak('Ready.', 'heart')
+            engine = prepare_engine(threads=args.threads, warmup=not args.no_warmup)
             print(f'warm TTS ready: rss={rss_mb()}MB socket={path}', file=sys.stderr, flush=True)
             serve(path, engine, idle_seconds=args.idle_seconds)
     except WorkerBusy as error:
