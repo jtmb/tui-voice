@@ -568,14 +568,18 @@ function VoiceButton(props: {sessionID?: string}) {
       lastSession = props.sessionID
     }
   })
-  const micBackground = () =>
-    phase() === "listening" ? "#f4b65f"
-      : phase() === "transcribing" ? "#99e7ff"
-      : phase() === "error" ? "#fa9e95"
-      : undefined
+  const indicator = () =>
+    phase() === "listening" ? {glyph: "●", color: "#f4b65f"}
+      : phase() === "transcribing" ? {glyph: "◐", color: "#99e7ff"}
+      : phase() === "error" ? {glyph: "✕", color: "#fa9e95"}
+      : {glyph: "○", color: "#3ca9e8"}
   return (
-    <text fg={active() ? "#101112" : phaseColor()} bg={micBackground()}
-      onMouseDown={activate} onMouseUp={activate}>{"🎙\uFE0E"}</text>
+    <box flexDirection="row" onMouseDown={activate} onMouseUp={activate}>
+      <text onMouseDown={activate} onMouseUp={activate}>{"🎙\uFE0E"}</text>
+      <text fg={indicator().color} onMouseDown={activate} onMouseUp={activate}>
+        {indicator().glyph}
+      </text>
+    </box>
   )
 }
 
