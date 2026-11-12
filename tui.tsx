@@ -569,12 +569,7 @@ function VoiceButton(props: {sessionID?: string}) {
     }
   })
   return (
-    <box focusable={true} onMouseDown={activate} onMouseUp={activate}
-      onKeyDown={(key: any) => { if (key?.name === "return" || key?.name === "space") activate() }}
-      paddingLeft={2} paddingRight={2}
-      backgroundColor={active() ? "#3a2d1e" : "#15384a"}>
-      <text fg={phaseColor()} onMouseDown={activate} onMouseUp={activate}>◉ {active() ? phaseLabel() : "Voice"}</text>
-    </box>
+    <text fg={phaseColor()} onMouseDown={activate} onMouseUp={activate}>◉</text>
   )
 }
 
@@ -587,15 +582,9 @@ function MuteButton() {
     onMute()
   }
   return (
-    <box focusable={true} onMouseDown={activate} onMouseUp={activate}
-      onKeyDown={(key: any) => { if (key?.name === "return" || key?.name === "space") activate() }}
-      paddingLeft={2} paddingRight={2}
-      backgroundColor={readAloudEnabled() ? "#15384a" : "#3a2d1e"}>
-      <text fg={readAloudEnabled() ? "#3ca9e8" : "#f4b65f"}
-        onMouseDown={activate} onMouseUp={activate}>
-        {readAloudEnabled() ? "🔊 Replies" : "🔇 Replies"}
-      </text>
-    </box>
+    <text onMouseDown={activate} onMouseUp={activate}>
+      {readAloudEnabled() ? "🔊" : "🔇"}
+    </text>
   )
 }
 
@@ -621,7 +610,7 @@ export default Plugin.define({
     const offFooter = context.ui.slot({
       append: "prompt.footer",
       render: input => (
-        <box flexDirection="row" gap={1}>
+        <box flexDirection="row" gap={2}>
           <VoiceButton sessionID={input.sessionID} />
           <MuteButton />
         </box>
