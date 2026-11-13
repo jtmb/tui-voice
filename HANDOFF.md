@@ -1,5 +1,40 @@
 # tui-voice handoff
 
+## 2026-11-13 EST — log-driven reliability fixes
+
+- ASR/TTS worker thread overrides are now clamped to the ranges their CLIs
+  accept (ASR 1–8, TTS 1–24). An out-of-range `TUI_VOICE_ASR_THREADS` previously
+  made every warm-ASR start die with a bare `status 2`; reproduced with
+  `TUI_VOICE_ASR_THREADS=16` and fixed. Invalid `TUI_VOICE_WARM_IDLE` values no
+  longer break helper import.
+- `warm --stop` is silent and idempotent when a worker is already gone; it no
+  longer logs a false "warm worker unavailable" warning. `--stop` exits nonzero
+  if a worker responds but does not stop, and `--restart` refuses to start a new
+  worker after a failed stop.
+- Read-aloud now fails loudly instead of silently doing nothing for markup-only
+  replies or an exhausted resume offset. The old 40-chunk cap silently dropped
+  the end of long replies (20k chars became 16,760); chunking now covers the
+  whole reply up to a documented 400-chunk guard.
+- Reply WAVs are removed in a `finally`, including playback failures, and a
+  partial recording is deleted when the helper receives SIGTERM (session change
+  or cancellation). Stale private WAVs from earlier runs were removed locally.
+- Plugin: intentional helper cancellation is no longer logged as a dictation or
+  read-aloud error. Dictation now tracks its own child instead of the global
+  helper handle, so microphone tests, device listing, or read-aloud cannot be
+  signalled by mistake. Queued drafts are kept per session, rechecked against
+  the route after awaits, and retried when the reply ends. Control characters
+  are stripped before insertion so a transcript cannot submit the prompt.
+- Microphone arrows load the device list instead of cycling only "Automatic".
+  The footer mic/speaker buttons no longer toggle twice on a press longer than
+  500 ms, while still accepting either mouse-down or mouse-up-only hosts.
+- A turn that is already transcribing survives a session switch and queues into
+  its original session; only an in-progress recording is canceled.
+- Verification: 33 standard-library tests pass, `ruff check` and `py_compile`
+  pass, ASR starts with the 16-thread override at 8 threads, absent-worker stop
+  is silent, CPU read-aloud and dictation fixtures pass, and a fresh tmux TUI
+  showed `▐○🎙︎ │🔊︎▌`, opened Voice settings, toggled `🔊`/`🔇`, and quit with no
+  plugin cleanup error.
+
 ## 2026-11-12 EST — AMD GPU attempt: blocked by the Windows driver
 
 - Environment: Windows 11 26H2 (build 26300.9974), WSL 2.6.2.0, WSL kernel

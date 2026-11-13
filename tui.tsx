@@ -29,18 +29,27 @@ function logError(where: string, error: any, detail?: string) {
 type Phase = "idle" | "listening" | "transcribing" | "thinking" | "speaking" | "error"
 type Settings = { mic: string; voice: string; seconds: number; silence: number; threshold: number; gain: number; readAloud: boolean }
 
+class VoiceCancelled extends Error {
+  constructor() {
+    super("Voice cancelled")
+    this.name = "VoiceCancelled"
+  }
+}
+
 const [active, setActive] = createSignal(false)
 const [phase, setPhase] = createSignal<Phase>("idle")
 const [settingsOpen, setSettingsOpen] = createSignal(false)
 let settings: Settings = { mic: "", voice: "heart", seconds: 60, silence: 1.5, threshold: -35, gain: 0, readAloud: true }
 let updateSettings: ((mutation: (draft: Settings) => void) => Promise<void>) | undefined
-let child: ChildProcess | null = null
-let pendingDraft: {sessionID: string; text: string} | null = null
+let dictationChild: ChildProcess | null = null
+let pendingDrafts: Array<{sessionID: string; text: string}> = []
 let pendingFlush = false
 let speechQueue: Promise<void> = Promise.resolve()
 let speechChild: ChildProcess | null = null
 let speechState: {text: string; voice: string; startChunk: number} | null = null
 let interruptedSpeech: {text: string; voice: string; startChunk: number} | null = null
+// A stop or timeout is an expected exit, not a helper failure to log.
+const expectedExit = new WeakSet<ChildProcess>()
 let lastReadAloud: boolean | null = null
 let lastSession = ""
 let onToggle: () => void = () => {}
@@ -66,11 +75,11 @@ function helperPayload(args: string[], timeoutMs: number, track?: (child: ChildP
   return new Promise((resolve, reject) => {
     if (!PYTHON) { reject(new Error("TUI_VOICE_PYTHON is not configured")); return }
     const childProcess = spawn(PYTHON, [HELPER, ...args], {stdio: ["ignore", "pipe", "pipe"]})
-    child = childProcess
     track?.(childProcess)
     let stdout = ""
     let stderr = ""
     const timer = setTimeout(() => {
+      expectedExit.add(childProcess)
       childProcess.kill("SIGTERM")
       logError("helper timeout", new Error("Voice helper timed out"), args.join(" "))
       reject(new Error("Voice helper timed out"))
@@ -79,15 +88,16 @@ function helperPayload(args: string[], timeoutMs: number, track?: (child: ChildP
     childProcess.stderr?.on("data", data => { stderr += String(data) })
     childProcess.on("error", error => {
       clearTimeout(timer)
-      if (child === childProcess) child = null
       track?.(null)
       logError("helper spawn", error, args.join(" "))
       reject(error)
     })
     childProcess.on("close", code => {
       clearTimeout(timer)
-      if (child === childProcess) child = null
       track?.(null)
+      if (expectedExit.has(childProcess)) {
+        reject(new VoiceCancelled()); return
+      }
       let payload: any = null
       try { payload = JSON.parse(stdout.trim().split("\n").at(-1) || "{}") } catch {}
       if (payload?.ok === false) {
@@ -122,14 +132,16 @@ function prewarmWorkers() {
 function stopVoice() {
   setActive(false)
   setPhase("idle")
-  if (child) {
-    try { child.kill("SIGTERM") } catch {}
-    child = null
+  if (dictationChild) {
+    expectedExit.add(dictationChild)
+    try { dictationChild.kill("SIGTERM") } catch {}
+    dictationChild = null
   }
 }
 
 function stopSpeech() {
   if (speechChild) {
+    expectedExit.add(speechChild)
     try { speechChild.kill("SIGTERM") } catch {}
     speechChild = null
   }
@@ -158,16 +170,19 @@ function findPromptEditor(renderer: any) {
 function insertIntoPrompt(context: any, text: string) {
   const editor = findPromptEditor(context.renderer)
   if (!editor) return false
+  // Transcripts are inserted as text, never as keystrokes that could submit.
+  const safe = text.replace(/[\u0000-\u001f\u007f]+/g, " ").trim()
+  if (!safe) return false
   editor.focus()
   const stdin = context.renderer.stdin
   if (stdin && typeof stdin.emit === "function") {
-    stdin.emit("data", Buffer.from(text))
+    stdin.emit("data", Buffer.from(safe))
     return true
   }
   if (!editor.editBuffer) return false
   const current = editor.editBuffer.getText()
   const prefix = current && !/\s$/.test(current) ? " " : ""
-  editor.editBuffer.setText(current + prefix + text)
+  editor.editBuffer.setText(current + prefix + safe)
   editor.requestRender?.()
   return true
 }
@@ -184,21 +199,30 @@ async function flushPending(context: any) {
   pendingFlush = true
   try {
     const end = Date.now() + 300000
-    while (pendingDraft && Date.now() < end) {
-      const draft = pendingDraft
+    while (pendingDrafts.length && Date.now() < end) {
       if (active()) { await delay(300); continue }
       const route = context.ui.router.current()
-      if (route?.type !== "session" || route.sessionID !== draft.sessionID) {
-        pendingDraft = null
-        break
-      }
+      const draft = pendingDrafts.find(
+        item => route?.type === "session" && item.sessionID === route.sessionID)
+      if (!draft) { await delay(500); continue }
       if (await sessionRunning(context, draft.sessionID)) { await delay(500); continue }
       await delay(80)
-      const text = pendingDraft?.text
-      pendingDraft = null
-      if (!text) break
-      if (insertIntoPrompt(context, text)) toast(context, "Inserted into the message box. Edit it, then send.", "success")
-      else toast(context, "Could not find the message box.", "warning")
+      // The route can change during either await; never insert into another chat.
+      const currentRoute = context.ui.router.current()
+      if (currentRoute?.type !== "session" || currentRoute.sessionID !== draft.sessionID) {
+        await delay(200)
+        continue
+      }
+      const latest = pendingDrafts.find(item => item.sessionID === draft.sessionID)
+      if (!latest) continue
+      if (insertIntoPrompt(context, latest.text)) {
+        pendingDrafts = pendingDrafts.filter(item => item !== latest)
+        toast(context, "Inserted into the message box. Edit it, then send.", "success")
+        if (pendingDrafts.some(item => item.sessionID === draft.sessionID)) continue
+      } else {
+        // Leave it queued so a later dictation or route change can retry.
+        toast(context, "Could not find the message box.", "warning")
+      }
       break
     }
   } finally {
@@ -207,8 +231,9 @@ async function flushPending(context: any) {
 }
 
 function queueDraft(context: any, sessionID: string, text: string, running: boolean) {
-  if (pendingDraft?.sessionID === sessionID) pendingDraft.text += " " + text
-  else pendingDraft = {sessionID, text}
+  const existing = pendingDrafts.find(item => item.sessionID === sessionID)
+  if (existing) existing.text += " " + text
+  else pendingDrafts.push({sessionID, text})
   if (running) toast(context, "Transcribed. Will insert when the reply finishes.", "info")
   void flushPending(context)
 }
@@ -229,8 +254,8 @@ async function ensureSession(context: any) {
 async function toggleVoice(context: any) {
   try {
     if (active()) {
-      if (phase() === "listening" && child) {
-        try { child.kill("SIGUSR1") } catch {}
+      if (phase() === "listening" && dictationChild) {
+        try { dictationChild.kill("SIGUSR1") } catch {}
         toast(context, "Finishing…", "info")
       } else {
         toast(context, "Working…", "info")
@@ -250,22 +275,23 @@ async function toggleVoice(context: any) {
       "--gain", String(settings.gain ?? 0),
     ]
     if (settings.mic) args.push("--mic", settings.mic)
-    const recording = await helperPayload(args, 120000)
+    const recording = await helperPayload(args, 120000,
+      process => { dictationChild = process })
     if (!active()) return
     setPhase("transcribing")
-    const heard = await helperPayload(["transcribe", "--wav", recording.path], 150000)
+    const heard = await helperPayload(["transcribe", "--wav", recording.path], 150000,
+      process => { dictationChild = process })
     if (!active()) return
     const text = String(heard.text || "").trim()
     if (!text) { toast(context, "I did not catch that. Try again.", "warning"); return }
     const running = await sessionRunning(context, route.sessionID)
     queueDraft(context, route.sessionID, text, running)
   } catch (error: any) {
+    if (error?.name === "VoiceCancelled") return
     logError("dictation", error)
-    if (active()) {
-      stopVoice()
-      setPhase("error")
-      toast(context, error?.message || "Voice input failed.", "error")
-    }
+    stopVoice()
+    setPhase("error")
+    toast(context, error?.message || "Voice input failed.", "error")
   } finally {
     if (active()) stopVoice()
   }
@@ -317,9 +343,9 @@ function speakReply(context: any, text: string, options?: {startChunk?: number; 
       process => { speechChild = process })
       interruptedSpeech = null
     } catch (error: any) {
-      if (speechState === state) logError("read-aloud", error)
+      if (error?.name !== "VoiceCancelled" && speechState === state) logError("read-aloud", error)
       // A mute/interrupt keeps interruptedSpeech for resume.
-      if (speechState === state && readAloudEnabled()) {
+      if (error?.name !== "VoiceCancelled" && speechState === state && readAloudEnabled()) {
         toast(context, error?.message || "Local read-aloud failed.", "error")
       }
     } finally {
@@ -430,13 +456,25 @@ function VoiceSettings(props: {onClose: () => void}) {
     }
   }
 
-  function cycleMic(direction: number) {
-    const options = ["", ...devices()]
+  async function cycleMic(direction: number) {
+    let list = devices()
+    if (!list.length) {
+      try {
+        const data = await helperPayload(["devices"], 30000)
+        list = Array.isArray(data.devices) ? data.devices : []
+        setDevices(list)
+      } catch (error: any) {
+        logError("microphone list", error)
+        setTestStatus(error?.message || "Could not list microphones.")
+        return
+      }
+    }
+    const options = ["", ...list]
     const current = settings.mic || ""
     let index = options.indexOf(current)
     if (index < 0) index = 0
     const next = options[(index + direction + options.length) % options.length]
-    void saveSetting("mic", next)
+    await saveSetting("mic", next)
   }
 
   async function testMicrophone() {
@@ -666,15 +704,30 @@ function openSettings(context: any) {
 
 function VoiceButton(props: {sessionID?: string; panel: any}) {
   let lastAction = 0
+  let downAt = 0
+  let lastUp = 0
   const activate = () => {
     const now = Date.now()
     if (now - lastAction < 500) return
     lastAction = now
     onToggle()
   }
+  const down = () => {
+    downAt = Date.now()
+    activate()
+  }
+  const up = () => {
+    const now = Date.now()
+    if (downAt) { downAt = 0; lastUp = now; return }
+    if (now - lastUp < 50) return
+    lastUp = now
+    activate()
+  }
   createEffect(() => {
     if (props.sessionID && props.sessionID !== lastSession) {
-      if (lastSession && active()) stopVoice()
+      // A recording belongs to the old session and is canceled. A turn already
+      // transcribing is allowed to finish and queue into that session.
+      if (lastSession && active() && phase() === "listening") stopVoice()
       lastSession = props.sessionID
     }
   })
@@ -685,28 +738,41 @@ function VoiceButton(props: {sessionID?: string; panel: any}) {
       : {glyph: "○", color: "#3ca9e8"}
   return (
     <box flexDirection="row" backgroundColor={props.panel}
-      onMouseDown={activate} onMouseUp={activate}>
-      <text fg={indicator().color} onMouseDown={activate} onMouseUp={activate}>
+      onMouseDown={down} onMouseUp={up}>
+      <text fg={indicator().color} onMouseDown={down} onMouseUp={up}>
         {indicator().glyph}
       </text>
-      <text fg={indicator().color} onMouseDown={activate} onMouseUp={activate}>{"🎙\uFE0E"}</text>
+      <text fg={indicator().color} onMouseDown={down} onMouseUp={up}>{"🎙\uFE0E"}</text>
     </box>
   )
 }
 
 function MuteButton(props: {panel: any; theme: any}) {
   let lastAction = 0
+  let downAt = 0
+  let lastUp = 0
   const activate = () => {
     const now = Date.now()
     if (now - lastAction < 500) return
     lastAction = now
     onMute()
   }
+  const down = () => {
+    downAt = Date.now()
+    activate()
+  }
+  const up = () => {
+    const now = Date.now()
+    if (downAt) { downAt = 0; lastUp = now; return }
+    if (now - lastUp < 50) return
+    lastUp = now
+    activate()
+  }
   return (
     <box flexDirection="row" backgroundColor={props.panel}
-      onMouseDown={activate} onMouseUp={activate}>
+      onMouseDown={down} onMouseUp={up}>
       <text fg={readAloudEnabled() ? props.theme.text?.base : props.theme.text?.muted}
-        onMouseDown={activate} onMouseUp={activate}>
+        onMouseDown={down} onMouseUp={up}>
         {readAloudEnabled() ? "🔊\uFE0E" : "🔇\uFE0E"}
       </text>
     </box>
@@ -739,11 +805,22 @@ export default Plugin.define({
       else interruptSpeech()
     })
 
+    createEffect(() => {
+      const route = context.ui.router.current()
+      if (route?.type === "session" &&
+          pendingDrafts.some(item => item.sessionID === route.sessionID)) {
+        void flushPending(context)
+      }
+    })
+
     const stopText = context.data.on("session.text.ended", (event: any) => {
       const route = context.ui.router.current()
       if (route?.type !== "session" || route.sessionID !== event?.data?.sessionID) return
       const text = String(event?.data?.text || "").trim()
       if (text) speakReply(context, text)
+      if (pendingDrafts.some(item => item.sessionID === event?.data?.sessionID)) {
+        void flushPending(context)
+      }
     })
 
     const offFooter = context.ui.slot({

@@ -19,7 +19,6 @@ import signal
 import struct
 import subprocess
 import sys
-import tempfile
 import threading
 import time
 import traceback
@@ -34,12 +33,34 @@ ASR_WORKER = VOICE_DIR / 'asr-worker.py'
 TTS_WORKER = HERE / 'tts_worker.py'
 ASR_PYTHON = Path(os.environ.get('TUI_VOICE_ASR_PYTHON', str(VOICE_DIR / '.asr-venv/bin/python')))
 TTS_PYTHON = Path(os.environ.get('TUI_VOICE_TTS_PYTHON', str(VOICE_DIR / '.venv/bin/python')))
-WARM_IDLE = int(os.environ.get('TUI_VOICE_WARM_IDLE', '1800'))
-ASR_THREADS = int(os.environ.get('TUI_VOICE_ASR_THREADS', '8'))
-TTS_THREADS = int(os.environ.get('TUI_VOICE_TTS_THREADS', '8'))
+
+
+def _bounded_env_int(name, default, maximum):
+    """Keep worker arguments inside the range its own CLI accepts."""
+    try:
+        value = int(os.environ.get(name, str(default)))
+    except (TypeError, ValueError):
+        value = default
+    return max(1, min(value, maximum))
+
+
+def _env_seconds(name, default):
+    try:
+        return max(0, int(os.environ.get(name, str(default))))
+    except (TypeError, ValueError):
+        return default
+
+
+WARM_IDLE = _env_seconds('TUI_VOICE_WARM_IDLE', 1800)
+
+# asr-worker.py accepts 1..8 and tts_worker.py accepts 1..24. An out-of-range
+# override otherwise makes every start die with a bare argparse status 2.
+ASR_THREADS = _bounded_env_int('TUI_VOICE_ASR_THREADS', 8, 8)
+TTS_THREADS = _bounded_env_int('TUI_VOICE_TTS_THREADS', 8, 24)
 POWERSHELL = '/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe'
 CMD = '/mnt/c/Windows/System32/cmd.exe'
 _current = None
+_capture_path = None
 _cold_voice = None
 
 LOG_DIR = Path(os.environ.get('TUI_VOICE_LOG_DIR') or
@@ -47,6 +68,7 @@ LOG_DIR = Path(os.environ.get('TUI_VOICE_LOG_DIR') or
 LOG_FILE = LOG_DIR / 'voice.log'
 LOG_LIMIT = 1_000_000
 ASR_CHUNK_SECONDS = 28.0
+MAX_SPEECH_CHUNKS = 400
 
 
 def log_event(level, message, **fields):
@@ -75,12 +97,18 @@ def fail(message, **fields):
 
 
 def stop_child(_signum=None, _frame=None):
-    global _current
+    global _current, _capture_path
     if _current is not None and _current.poll() is None:
         try:
             _current.terminate()
         except OSError:
             pass
+    if _capture_path:
+        try:
+            Path(_capture_path).unlink()
+        except OSError:
+            pass
+        _capture_path = None
     raise SystemExit(1)
 
 
@@ -203,6 +231,8 @@ def record(seconds, path=None, mic=None, silence=1.5, threshold=-35, gain=0):
         path = windows_temp() / ('tui-voice-' + str(os.getpid()) + '.wav')
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
+    global _current, _capture_path
+    _capture_path = str(path)
     windows_path = to_windows(path)
     command = [
         ffmpeg(), '-hide_banner', '-loglevel', 'info' if silence > 0 else 'error', '-f', 'dshow',
@@ -282,6 +312,11 @@ def record(seconds, path=None, mic=None, silence=1.5, threshold=-35, gain=0):
     reader.join(timeout=1)
     _current = None
     if not path.is_file() or path.stat().st_size <= 44:
+        try:
+            path.unlink()
+        except OSError:
+            pass
+        _capture_path = None
         fail('Microphone capture failed: ffmpeg returned no audio',
              device=device, detail='\n'.join(tail[-20:]))
     rms = 0.0
@@ -297,6 +332,7 @@ def record(seconds, path=None, mic=None, silence=1.5, threshold=-35, gain=0):
         pass
     log_event('info', 'recorded', path=str(path), device=device, seconds=seconds,
               bytes=path.stat().st_size, rms=round(rms, 1))
+    _capture_path = None
     return {'ok': True, 'path': str(path), 'windows_path': windows_path,
             'device': device, 'devices': names, 'seconds': seconds,
             'silence': silence, 'threshold': threshold, 'gain': gain,
@@ -454,6 +490,7 @@ def start_worker(kind, idle_seconds=None):
             return {'ok': False, 'error': f'Missing {kind} worker script: {script}'}
         idle = WARM_IDLE if idle_seconds is None else max(0, int(idle_seconds))
         threads = ASR_THREADS if kind == 'asr' else TTS_THREADS
+        threads = max(1, min(threads, 8 if kind == 'asr' else 24))
         command = [str(python), str(script), '--start', '--socket', str(path),
                    '--idle-seconds', str(idle), '--threads', str(threads)]
         try:
@@ -482,15 +519,19 @@ def start_worker(kind, idle_seconds=None):
 
 def stop_worker(kind):
     path = asr_socket() if kind == 'asr' else tts_socket()
-    result = worker_request(path, {'operation': 'shutdown'}, timeout=5)
-    stopped = result is not None
-    if stopped:
-        for _ in range(50):
-            time.sleep(0.1)
-            if worker_request(path, {'operation': 'status'}, timeout=0.3, quiet=True) is None:
-                break
-        else:
-            stopped = False
+    # A missing worker is the normal outcome of stopping an idle service; it is
+    # not a fallback warning and should not be logged as one.
+    result = worker_request(path, {'operation': 'shutdown'}, timeout=5, quiet=True)
+    if result is None:
+        return {'ok': True, 'stopping': False, 'state': 'not running',
+                'socket': str(path)}
+    stopped = True
+    for _ in range(50):
+        time.sleep(0.1)
+        if worker_request(path, {'operation': 'status'}, timeout=0.3, quiet=True) is None:
+            break
+    else:
+        stopped = False
     return {'ok': stopped, 'stopping': stopped, 'socket': str(path)}
 
 
@@ -579,7 +620,7 @@ def transcribe(path):
                     result = cold_voice().transcribe(encoded)
                 if not result:
                     raise ValueError('Local dictation returned no usable result')
-            except Exception as error:
+            except Exception:
                 log_event('error', 'transcription chunk failed', path=str(path),
                           chunk=index + 1, chunks=len(parts), seconds=round(duration, 2),
                           detail=traceback.format_exc()[-3000:])
@@ -637,7 +678,9 @@ def chunks(text, limit=420):
     clean = re.sub(r'[*_`#>]', ' ', clean)
     clean = ' '.join(clean.split())
     result = []
-    while clean and len(result) < 40:
+    while clean:
+        if len(result) >= MAX_SPEECH_CHUNKS:
+            raise ValueError('Reply is too long to read aloud')
         if len(clean) <= limit:
             result.append(clean)
             break
@@ -668,10 +711,14 @@ def say(text, voice_id='heart', should_play=True, start_chunk=0, progress_file=N
     providers = set()
     backends = {}
     gpu_verified = requested_provider() != CPU_PROVIDER
-    directory = windows_temp()
     spoken = 0
     parts = chunks(text)
+    if not parts:
+        fail('Nothing to speak after removing markup')
     start_chunk = max(0, int(start_chunk or 0))
+    if start_chunk >= len(parts):
+        fail('No speech remains after the last played chunk')
+    directory = windows_temp()
     try:
         for index, chunk in enumerate(parts):
             if index < start_chunk:
@@ -700,14 +747,18 @@ def say(text, voice_id='heart', should_play=True, start_chunk=0, progress_file=N
                     if key in result
                 }
             path = directory / ('tui-voice-reply-' + str(os.getpid()) + '-' + str(index) + '.wav')
-            path.write_bytes(base64.b64decode(result['wav']))
-            spoken += 1
-            if should_play:
-                play(path)
             try:
-                path.unlink()
-            except OSError:
-                pass
+                path.write_bytes(base64.b64decode(result['wav']))
+                spoken += 1
+                if should_play:
+                    play(path)
+            finally:
+                # Also covers playback/SystemExit failures: no private audio is
+                # left behind in the Windows temp directory.
+                try:
+                    path.unlink()
+                except OSError:
+                    pass
     except Exception as error:
         fail('Local speech failed: ' + str(error), traceback=traceback.format_exc())
     return {'ok': True, 'voice': voice_id, 'chunks': spoken, 'played': bool(should_play),
@@ -759,7 +810,12 @@ def main():
         if args.stop or args.restart:
             stopped = {kind: stop_worker(kind) for kind in kinds}
             if args.stop:
-                output({'ok': True, 'stopped': stopped})
+                result = {'ok': all(item['ok'] for item in stopped.values()), 'stopped': stopped}
+                output(result, 0 if result['ok'] else 1)
+            if not all(item['ok'] for item in stopped.values()):
+                result = {'ok': False, 'stopped': stopped,
+                          'error': 'A worker did not stop; refusing to report a clean restart'}
+                output(result, 1)
             time.sleep(0.2)
         started = {kind: start_worker(kind, args.idle_seconds) for kind in kinds}
         result = {'ok': all(item['ok'] for item in started.values()), 'started': started}
