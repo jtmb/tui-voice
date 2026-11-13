@@ -26,8 +26,8 @@ Defaults: **1.5 s**, **60 s**, automatic mic, **−35 dB**, **0 dB**, read-aloud
 
 Missing words usually mean the turn ended during a pause or the input is quiet.
 
-1. Increase **Finish after a pause** to 0.6–0.8 s. This is the first fix for
-   clipped sentence endings.
+1. Increase **Finish after a pause** from the default 1.5 s to 2.0 or 2.5 s
+   if a natural pause is cutting off the end of a sentence.
 2. Run **Test microphone**. `silent`/`quiet` means gain or device selection is the
    problem, not transcription.
 3. Raise **Input gain** to 6–12 dB for a quiet Focusrite input. Avoid clipping on
