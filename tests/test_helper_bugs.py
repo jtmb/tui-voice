@@ -83,6 +83,12 @@ class HelperBugTests(unittest.TestCase):
         self.assertEqual(result['state'], 'not running')
         self.assertEqual(stderr.getvalue(), '')
 
+    def test_stop_reports_a_worker_that_still_answers_after_shutdown(self):
+        with patch.object(helper, 'worker_request', side_effect=[None, {'pid': 1}]):
+            result = helper.stop_worker('tts')
+        self.assertFalse(result['ok'])
+        self.assertEqual(result['state'], 'stop rejected')
+
     def test_warm_stop_exits_nonzero_when_worker_does_not_stop(self):
         for ok in (True, False):
             with self.subTest(ok=ok), \

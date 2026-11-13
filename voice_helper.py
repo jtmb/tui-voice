@@ -523,6 +523,12 @@ def stop_worker(kind):
     # not a fallback warning and should not be logged as one.
     result = worker_request(path, {'operation': 'shutdown'}, timeout=5, quiet=True)
     if result is None:
+        # Distinguish an idle-exited worker from one that is still answering but
+        # rejected shutdown.
+        alive = worker_request(path, {'operation': 'status'}, timeout=1, quiet=True)
+        if alive is not None:
+            return {'ok': False, 'stopping': False, 'state': 'stop rejected',
+                    'socket': str(path)}
         return {'ok': True, 'stopping': False, 'state': 'not running',
                 'socket': str(path)}
     stopped = True
