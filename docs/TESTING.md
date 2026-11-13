@@ -1,8 +1,15 @@
 # Testing
 
-There is no automated test framework yet. Verification is a small helper check
-plus a fresh-TUI gate. Reuse these checks; do not build recursive test
-infrastructure for this plugin.
+Run the focused provider/fallback regression checks with the standard library:
+
+```bash
+python3 -m unittest discover -s tests -v
+```
+
+These checks do not require model downloads or GPU hardware, and do not establish
+that Kokoro runs on the owner's GPU. For that, use the actual inference/profile
+check in [AMD_GPU.md](AMD_GPU.md), then the helper and fresh-TUI gates below.
+Reuse these checks; do not build recursive test infrastructure for this plugin.
 
 ## Helper checks
 
@@ -87,6 +94,53 @@ Expected: `say` reports `"warm_chunks": 1` with a worker running and `0` after
 `warm --stop`; both paths return usable audio. The worker sockets are `0600` under
 `$XDG_RUNTIME_DIR`.
 
+## AMD GPU gate
+
+CPU is the default and must stay green. GPU mode is a separate, explicit
+acceptance gate; run it only after [AMD_GPU.md](AMD_GPU.md) section 1 confirms
+the Windows display driver supports ROCm. Installing packages, or seeing a
+provider name in a list, does not pass this gate.
+
+```bash
+cd ~/repos/tui-voice
+VOICE=~/repos/fire-tv-next/lulu-launcher/voice
+export TUI_VOICE_TTS_PYTHON="$VOICE/.venv/bin/python"
+
+# 1. The runtime must see the GPU instead of crashing.
+rocminfo | grep -m1 gfx
+
+# 2. Actual inference plus executed-node accounting.
+TUI_VOICE_TTS_PROVIDER=migraphx "$TUI_VOICE_TTS_PYTHON" tts_worker.py --check
+
+# 3. Real worker and real speech.
+TUI_VOICE_TTS_PROVIDER=migraphx python3 voice_helper.py warm --restart --kind tts
+python3 voice_helper.py warm --status
+TUI_VOICE_TTS_PROVIDER=migraphx python3 voice_helper.py say \
+  --text "Read aloud is using the local AMD GPU." --voice heart --no-play
+```
+
+Pass requires all of these:
+
+- `rocminfo` reports the GPU (`gfx1100` for the RX 7900 XT).
+- `--check` exits 0 with `"ok": true`, `"gpu_execution_verified": true`, a
+  `providers` list containing `MIGraphXExecutionProvider`, and a `profile`
+  summary with nonzero MIGraphX `node_events`.
+- `warm --status` reports `requested_provider: MIGraphXExecutionProvider`, a
+  `providers` list that still contains it, and the FP32
+  `kokoro-v1.0.onnx` model.
+- `say` returns `warm_chunks` for the sentence and produces playable audio.
+- From a fresh TUI: a completed reply is spoken by that worker, mute/resume
+  works, and a TUI restart leaves exactly one TTS worker.
+- Failure is loud: with MIGraphX requested but unavailable, `--check` and
+  `warm --restart` exit nonzero and no CPU speech is produced. Record the exact
+  error, relevant `dmesg` line, and driver version instead of claiming speedup.
+
+Measured on 2026-11-12, the gate **failed before ONNX Runtime built a session**:
+`--check` exited 139 (SIGSEGV) in `librocdxg`, `dmesg` reported
+`dxgkio_reserve_gpu_va: Ioctl failed: -75`, and `warm --restart` exited 1 with
+`status -11`. The Windows driver was `31.0.14000.58004` (2022-12-02). See
+[AMD_GPU.md](AMD_GPU.md) for the prerequisite and fix.
+
 ## Fresh-TUI gate
 
 Close the current TUI completely and start a new one from outside the repository
@@ -135,10 +189,41 @@ Close the current TUI completely and start a new one from outside the repository
 - Silence auto-stop stopped a synthetic recording after the speech segment rather
   than using the full maximum.
 - Global load verified from `/home/brajam`, not from this repository.
+- Dictation fixtures on 2026-11-12: `short-2s.wav` returned
+  `Turn on the living room lights.` (confidence 0.9322); a 37 s synthetic turn
+  returned `"chunks": 2`; a corrupt WAV returned a clear error and appended an
+  `error` line to `~/.local/state/tui-voice/voice.log`.
+- CPU TTS baseline measured directly (no ORT profiling, 8 threads, one fixed
+  sentence, same voice):
+
+  | Model | Load | First synthesis | Warm synthesis | Audio | Warm RTF |
+  | --- | --- | --- | --- | --- | --- |
+  | INT8 | 0.781 s | 3.057 s | 2.930 s | 2.572 s | 1.139 |
+  | FP32 | 0.597 s | 0.558 s | 0.455 s | 2.411 s | 0.189 |
+
+  The FP32 export is faster than INT8 on this CPU/ONNX Runtime build. This is a
+  CPU measurement, not a GPU claim. `tts_worker.py --check` enables ORT
+  profiling, which inflates its timings (INT8 warm 6.715 s), so compare with the
+  direct benchmark, not the check output.
+- CPU worker restarted under `onnxruntime==1.29.0`: status reported
+  `requested_provider: CPUExecutionProvider` and
+  `model: .../kokoro-v1.0.int8.onnx`; `say --no-play` reported
+  `warm_chunks: 1`; playback through Windows `SoundPlayer` exited 0.
+- An explicit GPU request against the running CPU worker failed with
+  `TTS worker does not match the requested provider/model...` and exit 1; no CPU
+  speech was produced.
+- `warm --start`/`--restart` now exits nonzero when any worker fails to start,
+  and a GPU worker that dies at startup adds a hint naming the Windows AMD driver
+  and `docs/AMD_GPU.md` (two regression tests).
 
 ## Not verified
 
+- Kokoro inference on the RX 7900 XT. The 2026-11-12 attempt stopped at the
+  Windows display driver (`31.0.14000.58004`, 2022-12-02); no MIGraphX session,
+  GPU node execution, GPU audio, or GPU timing exists yet.
 - Mouse-click activation of the footer button (keyboard paths are verified).
 - Physical speech accuracy, latency, echo, and the practical gain/threshold
   settings for the owner’s room.
+- Audibility of Windows playback through the actual speakers; only the process
+  exit status and generated PCM were checked.
 - Dictation queued behind a real model turn was not physically repeated.
