@@ -108,7 +108,7 @@ restored before the model is needed.
 | Worker | Model | Socket | Idle exit |
 | --- | --- | --- | --- |
 | ASR | Whisper `base.en` int8, 8 CPU threads | `$XDG_RUNTIME_DIR/firewatch-asr/asr.sock` | 30 min |
-| TTS | Kokoro INT8 on CPU by default; FP32 with explicitly selected MIGraphX | `$XDG_RUNTIME_DIR/tui-voice/tts.sock` | 30 min |
+| TTS | Kokoro FP32 on CPU; FP32 also used for explicitly selected MIGraphX | `$XDG_RUNTIME_DIR/tui-voice/tts.sock` | 30 min |
 
 - Sockets are AF_UNIX, mode `0600`, inside a uid-owned `0700` directory. Only the
   same user can connect.
@@ -166,7 +166,7 @@ footer with keyboard hints. It is not a full-screen route.
 | Warm ASR Python | `VOICE_DIR/.asr-venv/bin/python` | `TUI_VOICE_ASR_PYTHON` |
 | Warm TTS Python | `VOICE_DIR/.venv/bin/python` | `TUI_VOICE_TTS_PYTHON` |
 | TTS execution provider | `cpu`; opt in with `migraphx` | `TUI_VOICE_TTS_PROVIDER` |
-| TTS model | CPU: `kokoro-v1.0.int8.onnx`; MIGraphX: `kokoro-v1.0.onnx` | `TUI_VOICE_TTS_MODEL` (absolute or relative to `VOICE_DIR/models`) |
+| TTS model | CPU and MIGraphX: `kokoro-v1.0.onnx` (FP32); INT8 is opt-in | `TUI_VOICE_TTS_MODEL` (absolute or relative to `VOICE_DIR/models`) |
 | Worker idle lifetime | 1800 seconds | `TUI_VOICE_WARM_IDLE` |
 | ASR worker threads | 8 | `TUI_VOICE_ASR_THREADS` |
 | TTS worker threads | 8 | `TUI_VOICE_TTS_THREADS` |

@@ -56,13 +56,17 @@ class TtsGpuTests(unittest.TestCase):
         self.voice_dir.start()
         self.addCleanup(self.voice_dir.stop)
 
-    def test_cpu_is_default_and_keeps_original_model(self):
+    def test_cpu_defaults_to_pinned_fp32_model(self):
         ort = fake_ort([worker.CPU_PROVIDER], [worker.CPU_PROVIDER])
         session = worker.create_session(ort, worker.selected_model(), 8)
         self.assertEqual(worker.requested_provider(), worker.CPU_PROVIDER)
-        self.assertEqual(worker.selected_model().name, 'kokoro-v1.0.int8.onnx')
+        self.assertEqual(worker.selected_model().name, 'kokoro-v1.0.onnx')
         self.assertEqual(ort.InferenceSession.call_args.kwargs['providers'], [worker.CPU_PROVIDER])
         session.disable_fallback.assert_not_called()
+
+    def test_cpu_can_still_select_int8_explicitly(self):
+        os.environ['TUI_VOICE_TTS_MODEL'] = 'kokoro-v1.0.int8.onnx'
+        self.assertEqual(worker.selected_model().name, 'kokoro-v1.0.int8.onnx')
 
     def test_bad_provider_configuration_is_not_treated_as_cpu(self):
         os.environ['TUI_VOICE_TTS_PROVIDER'] = 'migraphxx'

@@ -157,10 +157,11 @@ Sources: [ONNX packages](https://onnxruntime.ai/docs/install/),
 
 ## 4. Prepare and pin the FP32 model
 
-GPU mode defaults to `models/kokoro-v1.0.onnx`; CPU mode keeps
-`models/kokoro-v1.0.int8.onnx`. FP32 is the initial GPU candidate so that CPU-oriented
-INT8 optimization does not determine the GPU test. No RX 7900 XT speedup is
-assumed. The existing `models/voices-v1.0.bin` is reused.
+GPU mode and the CPU default both use `models/kokoro-v1.0.onnx` (FP32); INT8
+remains available only by explicitly setting `TUI_VOICE_TTS_MODEL` to
+`kokoro-v1.0.int8.onnx`. FP32 measured faster than INT8 on the owner's CPU/ORT
+runtime, and using one artifact keeps CPU and GPU comparisons identical. No
+RX 7900 XT speedup is assumed. The existing `models/voices-v1.0.bin` is reused.
 
 Use the **model-files-v1.0 release** matching the existing worker format:
 
@@ -269,13 +270,14 @@ python3 voice_helper.py warm --status
 ```
 
 `warm --status` must report `requested_provider: CPUExecutionProvider` and the
-`kokoro-v1.0.int8.onnx` model. Confirm speech with
+`kokoro-v1.0.onnx` model. Confirm speech with
 `say --text "CPU read aloud." --voice heart --no-play`; it should report
 `warm_chunks: 1` and no MIGraphX provider.
 
 Update any persisted provider/model exports and reopen OpenCode from that
-environment. This selects the original INT8 model and restores normal CPU
-fallback behavior.
+environment. This selects the pinned FP32 model and restores normal CPU
+fallback behavior. Set `TUI_VOICE_TTS_MODEL=kokoro-v1.0.int8.onnx` only if you
+deliberately want the older INT8 path.
 
 The AMD packages do not need to be removed for CPU use, but to return the
 interpreter to its pre-GPU state reinstall a captured freeze:
@@ -286,4 +288,4 @@ uv pip sync --python "$TUI_VOICE_TTS_PYTHON" /path/to/pre-gpu-freeze.txt
 
 That removes the `onnxruntime-ep-migraphx`, `migraphx`, and `rocm-sdk-*` wheels
 and restores CPU-only ONNX Runtime. Keep the FP32 model file and its manifest pin;
-they are inert while CPU mode selects the INT8 model.
+both CPU and GPU use it, while INT8 remains opt-in.

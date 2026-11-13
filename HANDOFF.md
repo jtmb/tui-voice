@@ -1,5 +1,23 @@
 # tui-voice handoff
 
+## 2026-11-13 EST — v0.1.1 CPU default moves to FP32
+
+- Branch `codex/cpu-fp32-default`; `package.json` is `0.1.1`.
+- CPU read-aloud now defaults to the already pinned FP32
+  `kokoro-v1.0.onnx`, the same artifact used by explicit MIGraphX mode.
+  INT8 remains available with
+  `TUI_VOICE_TTS_MODEL=kokoro-v1.0.int8.onnx`.
+- Reason: measured on the owner's runtime (8 threads, same text/voice,
+  profiling disabled):
+  - FP32 warm medians: 0.591 s short, 5.315 s medium, 15.18 s long.
+  - INT8 warm medians: 3.159 s short, 26.466 s medium (about 5× slower).
+- Verified: `warm --status` reports `CPUExecutionProvider` with
+  `kokoro-v1.0.onnx` and digest `7d5df8ec…36a6c5`; `say --no-play` reports
+  `warm_chunks: 1`; an explicit INT8 restart selects
+  `kokoro-v1.0.int8.onnx`, and the default restart returns to FP32.
+- 43 tests pass; `py_compile`, `ruff`, `esbuild`, and `git diff --check` pass.
+- Release not created yet; this branch is the v0.1.1 candidate.
+
 ## 2026-11-13 EST — independent review fixes
 
 - Dictation now uses an owned turn object reserved synchronously before the first

@@ -205,9 +205,13 @@ Close the current TUI completely and start a new one from outside the repository
   CPU measurement, not a GPU claim. `tts_worker.py --check` enables ORT
   profiling, which inflates its timings (INT8 warm 6.715 s), so compare with the
   direct benchmark, not the check output.
+- v0.1.1 rechecked CPU FP32 on short/medium/long replies before changing the
+  default: FP32 warm medians were 0.591 s, 5.315 s, and 15.18 s; INT8 was
+  3.159 s and 26.466 s on the first two (about 5× slower). INT8 remains
+  selectable with `TUI_VOICE_TTS_MODEL=kokoro-v1.0.int8.onnx`.
 - CPU worker restarted under `onnxruntime==1.29.0`: status reported
   `requested_provider: CPUExecutionProvider` and
-  `model: .../kokoro-v1.0.int8.onnx`; `say --no-play` reported
+  `model: .../kokoro-v1.0.onnx`; `say --no-play` reported
   `warm_chunks: 1`; playback through Windows `SoundPlayer` exited 0.
 - An explicit GPU request against the running CPU worker failed with
   `TTS worker does not match the requested provider/model...` and exit 1; no CPU

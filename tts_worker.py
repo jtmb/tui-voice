@@ -63,7 +63,9 @@ def requested_provider():
 
 
 def selected_model():
-    default = 'kokoro-v1.0.int8.onnx' if requested_provider() == CPU_PROVIDER else 'kokoro-v1.0.onnx'
+    # FP32 is faster than INT8 on the owner's CPU/ORT runtime; INT8 remains
+    # available with TUI_VOICE_TTS_MODEL=kokoro-v1.0.int8.onnx.
+    default = 'kokoro-v1.0.onnx'
     path = Path(os.environ.get('TUI_VOICE_TTS_MODEL', default)).expanduser()
     return (path if path.is_absolute() else VOICE_DIR / 'models' / path).resolve()
 

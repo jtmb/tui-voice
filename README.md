@@ -122,7 +122,9 @@ message box draft (never auto-sent)
 
 Read-aloud listens to completed assistant text in the current session and runs
 `voice_helper.py say` with the selected Kokoro voice. A persistent warm TTS worker
-keeps the ONNX voice loaded between chunks and replies.
+keeps the ONNX voice loaded between chunks and replies. CPU uses the pinned FP32
+`kokoro-v1.0.onnx` by default; INT8 remains available with
+`TUI_VOICE_TTS_MODEL=kokoro-v1.0.int8.onnx`.
 
 The plugin depends on the existing local voice stack:
 
