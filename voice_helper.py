@@ -61,6 +61,7 @@ POWERSHELL = '/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe'
 CMD = '/mnt/c/Windows/System32/cmd.exe'
 _current = None
 _capture_path = None
+_stop_requested = False
 _cold_voice = None
 
 LOG_DIR = Path(os.environ.get('TUI_VOICE_LOG_DIR') or
@@ -113,7 +114,10 @@ def stop_child(_signum=None, _frame=None):
 
 
 def request_stop(_signum=None, _frame=None):
-    global _current
+    global _current, _stop_requested
+    # Remember the request even while microphone enumeration runs: that child
+    # has no stdin, so it cannot receive ffmpeg's 'q' yet.
+    _stop_requested = True
     if _current is not None and _current.poll() is None:
         try:
             if _current.stdin:
@@ -224,6 +228,31 @@ def choose_mic(requested=None):
     return selected, names
 
 
+def capture_filters(silence, threshold, gain):
+    """Build the FFmpeg chain: gain first, then immediate silence reports."""
+    filters = []
+    if gain:
+        filters.append(f'volume={gain}dB')
+    if silence > 0:
+        filters.append(f'silencedetect=noise={threshold}dB:d=0.01')
+    return filters
+
+
+def silence_decision(kind, at, heard_sound, pause):
+    """Return (heard_sound, timer_seconds) for one silencedetect event.
+
+    The detector reports the start of a silence immediately. The Python timer
+    owns the configured pause duration, so it must not be applied twice.
+    """
+    if kind == 'start':
+        if at > 0.1:
+            heard_sound = True
+        return heard_sound, (pause if heard_sound and pause > 0 else None)
+    if kind == 'end':
+        return True, None
+    return heard_sound, None
+
+
 def record(seconds, path=None, mic=None, silence=1.5, threshold=-35, gain=0):
     device, names = choose_mic(mic)
     seconds = max(1, min(120, int(seconds)))
@@ -231,7 +260,7 @@ def record(seconds, path=None, mic=None, silence=1.5, threshold=-35, gain=0):
         path = windows_temp() / ('tui-voice-' + str(os.getpid()) + '.wav')
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    global _current, _capture_path
+    global _current, _capture_path, _stop_requested
     _capture_path = str(path)
     windows_path = to_windows(path)
     command = [
@@ -239,11 +268,7 @@ def record(seconds, path=None, mic=None, silence=1.5, threshold=-35, gain=0):
         '-rtbufsize', '64M', '-i', 'audio=' + device,
         '-t', str(seconds), '-ac', '1', '-ar', '16000', '-sample_fmt', 's16',
     ]
-    filters = []
-    if silence > 0:
-        filters.append(f'silencedetect=noise={threshold}dB:d={silence}')
-    if gain:
-        filters.append(f'volume={gain}dB')
+    filters = capture_filters(silence, threshold, gain)
     if filters:
         command += ['-af', ','.join(filters)]
     command += ['-y', windows_path]
@@ -277,28 +302,35 @@ def record(seconds, path=None, mic=None, silence=1.5, threshold=-35, gain=0):
                 pass
 
     tail = []
+    heard_sound = False
 
     def read_levels():
+        nonlocal heard_sound
         for line in process.stderr:
             tail.append(line.rstrip())
             del tail[:-40]
             match = re.search(r'silence_start:\s*([0-9.]+)', line)
-            if match:
-                at = float(match.group(1))
-                # Ignore the initial silent lead-in; stop only after speech + pause.
-                if at >= 0.8 and silence > 0:
-                    with lock:
-                        if timer['handle']:
-                            timer['handle'].cancel()
-                        handle = threading.Timer(silence, stop_after_silence)
-                        handle.daemon = True
-                        timer['handle'] = handle
-                        handle.start()
-            elif 'silence_end' in line:
+            kind = 'start' if match else ('end' if 'silence_end' in line else None)
+            if not kind:
+                continue
+            at = float(match.group(1)) if match else 0.0
+            heard_sound, wait = silence_decision(kind, at, heard_sound, silence)
+            if wait:
+                with lock:
+                    if timer['handle']:
+                        timer['handle'].cancel()
+                    handle = threading.Timer(wait, stop_after_silence)
+                    handle.daemon = True
+                    timer['handle'] = handle
+                    handle.start()
+            elif kind == 'end':
                 cancel_timer()
 
     reader = threading.Thread(target=read_levels, daemon=True)
     reader.start()
+    if _stop_requested:
+        _stop_requested = False
+        stop_after_silence()
 
     try:
         process.wait(timeout=seconds + 8)
@@ -311,6 +343,7 @@ def record(seconds, path=None, mic=None, silence=1.5, threshold=-35, gain=0):
     cancel_timer()
     reader.join(timeout=1)
     _current = None
+    _stop_requested = False
     if not path.is_file() or path.stat().st_size <= 44:
         try:
             path.unlink()
@@ -725,22 +758,57 @@ def say(text, voice_id='heart', should_play=True, start_chunk=0, progress_file=N
     if start_chunk >= len(parts):
         fail('No speech remains after the last played chunk')
     directory = windows_temp()
+    engine_lock = threading.Lock()
+
+    def synthesize(chunk):
+        nonlocal engine
+        result = warm_speak(chunk, voice_id)
+        if result is not None:
+            return result, True
+        with engine_lock:
+            if engine is None:
+                engine = voice()
+        return engine.speak(chunk, voice_id), False
+
+    prefetch = None
+
+    def start_prefetch(index, chunk):
+        slot = {'index': index, 'done': threading.Event(),
+                'result': None, 'warmed': False, 'error': None}
+
+        def run():
+            try:
+                slot['result'], slot['warmed'] = synthesize(chunk)
+            except BaseException as error:
+                slot['error'] = error
+            finally:
+                slot['done'].set()
+
+        threading.Thread(target=run, daemon=True).start()
+        return slot
+
     try:
         for index, chunk in enumerate(parts):
             if index < start_chunk:
                 continue
             if progress_file:
                 try:
-                    Path(progress_file).write_text(json.dumps({'chunk': index, 'chunks': len(parts)}))
+                    progress_path = Path(progress_file)
+                    progress_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+                    progress_path.write_text(json.dumps({'chunk': index, 'chunks': len(parts)}))
                 except OSError:
                     pass
-            result = warm_speak(chunk, voice_id)
-            if result is not None:
-                warmed += 1
+            if prefetch is not None and prefetch['index'] == index:
+                prefetch['done'].wait()
+                if prefetch['error'] is not None:
+                    raise prefetch['error']
+                result = prefetch['result']
+                was_warm = prefetch['warmed']
+                prefetch = None
             else:
-                if engine is None:
-                    engine = voice()
-                result = engine.speak(chunk, voice_id)
+                result, was_warm = synthesize(chunk)
+            if was_warm:
+                warmed += 1
             if result.get('engine'):
                 engines.add(result['engine'])
             providers.update(result.get('providers', []))
@@ -752,6 +820,10 @@ def say(text, voice_id='heart', should_play=True, start_chunk=0, progress_file=N
                         'providers', 'gpu_execution_verified', 'execution_profile')
                     if key in result
                 }
+            # Synthesize the next chunk while this one plays. The worker still
+            # serializes inference; playback is a separate process.
+            if index + 1 < len(parts):
+                prefetch = start_prefetch(index + 1, parts[index + 1])
             path = directory / ('tui-voice-reply-' + str(os.getpid()) + '-' + str(index) + '.wav')
             try:
                 path.write_bytes(base64.b64decode(result['wav']))

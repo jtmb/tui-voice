@@ -8,6 +8,7 @@ import math
 import os
 from pathlib import Path
 import signal
+import socket
 import subprocess
 import sys
 import tempfile
@@ -153,6 +154,13 @@ class TtsGpuTests(unittest.TestCase):
         (self.root / 'models/kokoro-v1.0.int8.onnx').write_bytes(b'changed')
         with self.assertRaisesRegex(ValueError, 'hash mismatch'):
             worker.verify_models(self.root / 'models/kokoro-v1.0.onnx')
+
+    def test_disconnected_client_is_detected(self):
+        left, right = socket.socketpair()
+        self.addCleanup(left.close)
+        self.assertFalse(worker.client_gone(left))
+        right.close()
+        self.assertTrue(worker.client_gone(left))
 
     def test_profile_ignores_registration_and_non_node_events(self):
         path = self.root / 'trace.json'

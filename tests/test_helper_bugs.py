@@ -2,6 +2,7 @@
 import base64
 from contextlib import redirect_stdout, redirect_stderr
 import io
+import json
 import os
 from pathlib import Path
 import signal
@@ -66,8 +67,16 @@ class HelperBugTests(unittest.TestCase):
         for kind, attribute, requested, expected in (
                 ('asr', 'ASR_THREADS', 16, '8'),
                 ('tts', 'TTS_THREADS', 99, '24')):
+            python = self.root / f'{kind}-python'
+            script = self.root / f'{kind}-worker.py'
+            python.write_text('')
+            script.write_text('')
+            python_attr = 'ASR_PYTHON' if kind == 'asr' else 'TTS_PYTHON'
+            script_attr = 'ASR_WORKER' if kind == 'asr' else 'TTS_WORKER'
             with self.subTest(kind=kind), \
                  patch.object(helper, attribute, requested), \
+                 patch.object(helper, python_attr, python), \
+                 patch.object(helper, script_attr, script), \
                  patch.object(helper, 'worker_request', side_effect=[None, None]), \
                  patch.object(helper.subprocess, 'run', return_value=completed) as run:
                 helper.start_worker(kind)
@@ -131,6 +140,43 @@ class HelperBugTests(unittest.TestCase):
         self.assertEqual(result['chunks'], 1)
         self.assertEqual(list(self.root.glob('*.wav')), [])
 
+    def test_gain_is_applied_before_silence_detection(self):
+        filters = helper.capture_filters(1.5, -35, 12)
+        self.assertEqual(filters[0], 'volume=12dB')
+        self.assertTrue(filters[1].startswith('silencedetect='))
+        self.assertIn('d=0.01', filters[1])
+
+    def test_silence_timer_uses_the_configured_pause_once(self):
+        heard, wait = helper.silence_decision('start', 1.0, False, 1.5)
+        self.assertTrue(heard)
+        self.assertEqual(wait, 1.5)
+        heard, wait = helper.silence_decision('end', 0.0, False, 1.5)
+        self.assertTrue(heard)
+        self.assertIsNone(wait)
+
+    def test_short_utterance_starts_the_pause_timer(self):
+        heard, wait = helper.silence_decision('start', 0.4, False, 1.5)
+        self.assertTrue(heard)
+        self.assertEqual(wait, 1.5)
+
+    def test_initial_silence_waits_for_sound(self):
+        heard, wait = helper.silence_decision('start', 0.0, False, 1.5)
+        self.assertFalse(heard)
+        self.assertIsNone(wait)
+        heard, wait = helper.silence_decision('end', 0.6, heard, 1.5)
+        self.assertTrue(heard)
+        self.assertIsNone(wait)
+        heard, wait = helper.silence_decision('start', 2.0, heard, 1.5)
+        self.assertTrue(heard)
+        self.assertEqual(wait, 1.5)
+
+    def test_early_stop_request_is_remembered(self):
+        helper._stop_requested = False
+        with patch.object(helper, '_current', None):
+            helper.request_stop()
+        self.assertTrue(helper._stop_requested)
+        helper._stop_requested = False
+
     def test_sigterm_removes_partial_capture(self):
         path = self.root / 'capture.wav'
         path.write_bytes(b'RIFF' + b'\0' * 40)
@@ -150,6 +196,42 @@ class HelperBugTests(unittest.TestCase):
     def test_pathological_reply_fails_instead_of_truncating(self):
         with self.assertRaisesRegex(ValueError, 'too long to read aloud'):
             helper.chunks('x' * (helper.MAX_SPEECH_CHUNKS * 421))
+
+    def test_say_prefetches_without_reordering_chunks(self):
+        text = 'A sentence for the speech queue. ' * 30
+        calls, played = [], []
+
+        def fake_warm(chunk, voice):
+            calls.append(chunk)
+            return wav_result()
+
+        def fake_play(path):
+            played.append(path.name)
+
+        with patch.object(helper, 'windows_temp', return_value=self.root), \
+             patch.object(helper, 'warm_speak', side_effect=fake_warm), \
+             patch.object(helper, 'play', side_effect=fake_play), \
+             redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            result = helper.say(text, should_play=True)
+        self.assertTrue(result['ok'])
+        self.assertGreaterEqual(result['chunks'], 2)
+        self.assertEqual(result['chunks'], len(calls))
+        self.assertEqual(len(played), result['chunks'])
+        self.assertTrue(played[0].endswith('-0.wav'))
+        self.assertTrue(played[-1].endswith(f'-{len(played) - 1}.wav'))
+        self.assertEqual(list(self.root.glob('*.wav')), [])
+
+    def test_say_creates_private_progress_directory(self):
+        progress = self.root / 'runtime' / 'speech-job.json'
+        with patch.object(helper, 'windows_temp', return_value=self.root), \
+             patch.object(helper, 'warm_speak', return_value=wav_result()), \
+             patch.object(helper, 'play'), \
+             redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            result = helper.say('Hello there.', should_play=False,
+                                progress_file=str(progress))
+        self.assertTrue(result['ok'])
+        self.assertTrue(progress.is_file())
+        self.assertEqual(json.loads(progress.read_text())['chunk'], 0)
 
     def test_say_rejects_markup_only_reply(self):
         stdout = io.StringIO()

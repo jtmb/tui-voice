@@ -1,5 +1,40 @@
 # tui-voice handoff
 
+## 2026-11-13 EST — independent review fixes
+
+- Dictation now uses an owned turn object reserved synchronously before the first
+  await. Each turn owns its session, child, cancellation, and stop request, so an
+  old close callback cannot clear a newer turn. Starting from home cannot create
+  two concurrent recorders.
+- A second press during microphone preparation is remembered and applied when
+  the recorder starts; SIGUSR1 is delayed until the helper has installed its
+  handler. A stop before capture is treated as a canceled turn, not an error.
+- Recording silence handling fixed with real FFmpeg evidence:
+  - the detector reports the start of silence immediately, so the configured
+    pause is now applied once by the Python timer (`d=0.01`, not `d=silence`);
+  - short utterances (0.4 s) now start the pause timer instead of recording to
+    the maximum;
+  - input gain is applied before silence detection, so the meter and detector
+    use the same signal level.
+- Read-aloud jobs carry a generation and a private per-job progress file under
+  `$XDG_RUNTIME_DIR/tui-voice`. Muting while dictation is finishing cancels
+  queued speech, and two TUI instances cannot read each other's resume chunk.
+- Speech chunks are synthesized one ahead while the current chunk plays; real
+  three-chunk output retained order and left no temp files. The whole-reply
+  timeout now scales with remaining chunks and preserves a resume position.
+- TTS worker: queued requests are bounded; disconnected clients are discarded
+  before inference; idle-exit waits for active/queued work. Real test with
+  `--idle-seconds 1` survived a long synthesis and then exited; a canceled
+  queued request did not run (`requests=1`).
+- Tests: 42 pass, including new cases for filter order, short-utterance silence,
+  early stop, prefetch order, unique progress creation, and disconnected clients.
+  `ruff`, `py_compile`, and esbuild pass. A fresh TUI double-press went
+  listening → transcribing → idle with no recorder left and no cleanup warning.
+- CPU benchmark recheck (8 threads, same runtime): INT8 warm 3.159 s short /
+  26.466 s medium; FP32 warm 0.591 s short / 5.315 s medium / 15.18 s long.
+  FP32 is about 5× faster on this host, but the CPU default remains INT8 pending
+  an explicit product decision and a new release.
+
 ## 2026-11-13 EST — log-driven reliability fixes
 
 - ASR/TTS worker thread overrides are now clamped to the ranges their CLIs

@@ -21,6 +21,7 @@ import io
 import json
 import os
 from pathlib import Path
+import select
 import signal
 import socket
 import stat
@@ -40,6 +41,7 @@ VOICE_DIR = Path(os.environ.get(
 MAX_FRAME = 16 * 1024 * 1024
 MAX_RESPONSE = 16 * 1024 * 1024
 MAX_TEXT = 1200
+MAX_QUEUED_SPEAK = 8
 DEFAULT_THREADS = 8
 START_TIMEOUT = 30.0
 CPU_PROVIDER = 'CPUExecutionProvider'
@@ -436,6 +438,17 @@ def _presets():
     return PRESETS
 
 
+def client_gone(connection):
+    """True when a waiting client has closed its side of the socket."""
+    try:
+        ready, _, _ = select.select([connection], [], [], 0)
+        if not ready:
+            return False
+        return connection.recv(1, socket.MSG_PEEK) == b''
+    except (OSError, ValueError):
+        return True
+
+
 def serve(path, engine, idle_seconds=1800):
     engine.require_gpu_execution()
     path = Path(path)
@@ -449,7 +462,9 @@ def serve(path, engine, idle_seconds=1800):
         path.unlink()
     server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     started = time.monotonic()
-    state = {'requests': 0, 'last': started, 'stopping': False}
+    state = {'requests': 0, 'last': started, 'stopping': False,
+             'active': 0, 'queued': 0}
+    state_lock = threading.Lock()
     speak_lock = threading.Lock()
 
     def handle(connection):
@@ -480,18 +495,46 @@ def serve(path, engine, idle_seconds=1800):
             if operation != 'speak':
                 send_frame(connection, {'ok': False, 'error': 'Unsupported operation'})
                 return
-            state['last'] = time.monotonic()
+            with state_lock:
+                full = state['queued'] >= MAX_QUEUED_SPEAK
+                if not full:
+                    state['queued'] += 1
+            if full:
+                send_frame(connection, {'ok': False,
+                                        'error': 'TTS worker busy; retry shortly'})
+                return
+            acquired = False
             try:
-                with speak_lock:
+                while not acquired:
+                    if client_gone(connection):
+                        return
+                    acquired = speak_lock.acquire(timeout=0.2)
+                if client_gone(connection):
+                    return
+                with state_lock:
+                    state['active'] += 1
+                    state['last'] = time.monotonic()
+                try:
                     result = engine.speak(request.get('text'), request.get('voice', 'heart'))
-                response = {'ok': True, 'result': result}
-                state['requests'] += 1
-            except Exception as error:  # bounded, no traceback sent to callers
-                response = {'ok': False, 'error': f'{type(error).__name__}: {error}'[:400]}
-            try:
-                send_frame(connection, response)
-            except OSError:
-                pass
+                    response = {'ok': True, 'result': result}
+                    with state_lock:
+                        state['requests'] += 1
+                except Exception as error:  # bounded, no traceback sent to callers
+                    response = {'ok': False,
+                                'error': f'{type(error).__name__}: {error}'[:400]}
+                finally:
+                    with state_lock:
+                        state['active'] -= 1
+                        state['last'] = time.monotonic()
+                try:
+                    send_frame(connection, response)
+                except OSError:
+                    pass
+            finally:
+                if acquired:
+                    speak_lock.release()
+                with state_lock:
+                    state['queued'] -= 1
 
     try:
         server.bind(str(path))
@@ -502,7 +545,10 @@ def serve(path, engine, idle_seconds=1800):
             try:
                 connection, _ = server.accept()
             except socket.timeout:
-                if idle_seconds and time.monotonic() - state['last'] > idle_seconds:
+                with state_lock:
+                    idle = (idle_seconds and not state['active'] and not state['queued']
+                            and time.monotonic() - state['last'] > idle_seconds)
+                if idle:
                     break
                 continue
             threading.Thread(target=handle, args=(connection,), daemon=True).start()

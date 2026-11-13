@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url"
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const HELPER = join(HERE, "voice_helper.py")
-const SPEECH_PROGRESS = "/tmp/opencode/tui-voice-speech.json"
+const SPEECH_DIR = join(process.env.XDG_RUNTIME_DIR || "/tmp", "tui-voice")
 const LOG_FILE = join(process.env.XDG_STATE_HOME || join(homedir(), ".local", "state"),
   "tui-voice", "voice.log")
 const PYTHON = process.env.TUI_VOICE_PYTHON
@@ -41,12 +41,23 @@ const [phase, setPhase] = createSignal<Phase>("idle")
 const [settingsOpen, setSettingsOpen] = createSignal(false)
 let settings: Settings = { mic: "", voice: "heart", seconds: 60, silence: 1.5, threshold: -35, gain: 0, readAloud: true }
 let updateSettings: ((mutation: (draft: Settings) => void) => Promise<void>) | undefined
-let dictationChild: ChildProcess | null = null
+type DictationTurn = {
+  id: number
+  sessionID: string
+  child: ChildProcess | null
+  childStartedAt: number
+  cancelled: boolean
+  stopRequested: boolean
+}
+let dictationTurn: DictationTurn | null = null
+let dictationCounter = 0
 let pendingDrafts: Array<{sessionID: string; text: string}> = []
 let pendingFlush = false
 let speechQueue: Promise<void> = Promise.resolve()
 let speechChild: ChildProcess | null = null
-let speechState: {text: string; voice: string; startChunk: number} | null = null
+let speechGeneration = 0
+let speechJobCounter = 0
+let speechState: {text: string; voice: string; startChunk: number; progressFile: string} | null = null
 let interruptedSpeech: {text: string; voice: string; startChunk: number} | null = null
 // A stop or timeout is an expected exit, not a helper failure to log.
 const expectedExit = new WeakSet<ChildProcess>()
@@ -129,22 +140,70 @@ function prewarmWorkers() {
   } catch {}
 }
 
-function stopVoice() {
+function ownsDictation(turn: DictationTurn) {
+  return dictationTurn === turn && !turn.cancelled
+}
+
+function beginDictation(): DictationTurn {
+  const turn: DictationTurn = {
+    id: ++dictationCounter, sessionID: "", child: null, childStartedAt: 0,
+    cancelled: false, stopRequested: false,
+  }
+  dictationTurn = turn
+  setActive(true)
+  setPhase("thinking")
+  return turn
+}
+
+function requestDictationStop(turn: DictationTurn) {
+  turn.stopRequested = true
+  const child = turn.child
+  if (!child) return
+  // SIGUSR1 is only safe after the helper has installed its handler.
+  const elapsed = turn.childStartedAt ? Date.now() - turn.childStartedAt : 0
+  setTimeout(() => {
+    if (!ownsDictation(turn) || turn.child !== child) return
+    try { child.kill("SIGUSR1") } catch {}
+  }, Math.max(0, 700 - elapsed))
+}
+
+function cancelDictation() {
+  const turn = dictationTurn
+  if (!turn) return
+  turn.cancelled = true
+  if (turn.child) {
+    expectedExit.add(turn.child)
+    try { turn.child.kill("SIGTERM") } catch {}
+    turn.child = null
+  }
+  dictationTurn = null
   setActive(false)
   setPhase("idle")
-  if (dictationChild) {
-    expectedExit.add(dictationChild)
-    try { dictationChild.kill("SIGTERM") } catch {}
-    dictationChild = null
-  }
+}
+
+function finishDictation(turn: DictationTurn) {
+  if (dictationTurn !== turn) return
+  dictationTurn = null
+  setActive(false)
+  setPhase("idle")
+}
+
+function stopVoice() {
+  cancelDictation()
 }
 
 function stopSpeech() {
+  speechGeneration += 1
   if (speechChild) {
     expectedExit.add(speechChild)
     try { speechChild.kill("SIGTERM") } catch {}
     speechChild = null
   }
+}
+
+function speechProgressFile() {
+  mkdirSync(SPEECH_DIR, {recursive: true, mode: 0o700})
+  return join(SPEECH_DIR, `speech-${process.pid}-${++speechJobCounter}.json`)
 }
 
 function placeholderText(node: any) {
@@ -252,18 +311,21 @@ async function ensureSession(context: any) {
 }
 
 async function toggleVoice(context: any) {
-  try {
-    if (active()) {
-      if (phase() === "listening" && dictationChild) {
-        try { dictationChild.kill("SIGUSR1") } catch {}
-        toast(context, "Finishing…", "info")
-      } else {
-        toast(context, "Working…", "info")
-      }
-      return
+  if (active()) {
+    const turn = dictationTurn
+    if (turn && !turn.stopRequested) {
+      requestDictationStop(turn)
+      toast(context, "Finishing…", "info")
+    } else {
+      toast(context, "Working…", "info")
     }
+    return
+  }
+  const turn = beginDictation()
+  try {
     const route = await ensureSession(context)
-    setActive(true)
+    if (!ownsDictation(turn)) return
+    turn.sessionID = route.sessionID
     setPhase("listening")
     prewarmWorkers()
     toast(context, "Listening… speak now, then pause.", "info")
@@ -275,25 +337,32 @@ async function toggleVoice(context: any) {
       "--gain", String(settings.gain ?? 0),
     ]
     if (settings.mic) args.push("--mic", settings.mic)
-    const recording = await helperPayload(args, 120000,
-      process => { dictationChild = process })
-    if (!active()) return
+    const recording = await helperPayload(args, 180000, process => {
+      if (!ownsDictation(turn)) return
+      turn.child = process
+      turn.childStartedAt = process ? Date.now() : 0
+      if (process && turn.stopRequested) requestDictationStop(turn)
+    })
+    if (!ownsDictation(turn)) return
     setPhase("transcribing")
     const heard = await helperPayload(["transcribe", "--wav", recording.path], 150000,
-      process => { dictationChild = process })
-    if (!active()) return
+      process => { if (ownsDictation(turn)) turn.child = process })
+    if (!ownsDictation(turn)) return
     const text = String(heard.text || "").trim()
     if (!text) { toast(context, "I did not catch that. Try again.", "warning"); return }
-    const running = await sessionRunning(context, route.sessionID)
-    queueDraft(context, route.sessionID, text, running)
+    const running = await sessionRunning(context, turn.sessionID)
+    queueDraft(context, turn.sessionID, text, running)
   } catch (error: any) {
-    if (error?.name === "VoiceCancelled") return
+    if (error?.name === "VoiceCancelled" || turn.cancelled || dictationTurn !== turn) return
+    // A stop that arrives before the helper installs SIGUSR1 can terminate it
+    // with a signal; the user asked to cancel this turn, not to see an error.
+    if (turn.stopRequested && /exited null|returned no audio/.test(String(error?.message || ""))) return
     logError("dictation", error)
-    stopVoice()
+    cancelDictation()
     setPhase("error")
     toast(context, error?.message || "Voice input failed.", "error")
   } finally {
-    if (active()) stopVoice()
+    finishDictation(turn)
   }
 }
 
@@ -308,7 +377,7 @@ function interruptSpeech() {
   if (state) {
     let chunk = state.startChunk
     try {
-      const progress = JSON.parse(readFileSync(SPEECH_PROGRESS, "utf8"))
+      const progress = JSON.parse(readFileSync(state.progressFile, "utf8"))
       if (Number.isInteger(progress?.chunk)) chunk = progress.chunk
     } catch {}
     interruptedSpeech = {...state, startChunk: chunk}
@@ -327,29 +396,48 @@ function resumeInterruptedSpeech(context: any) {
 function speakReply(context: any, text: string, options?: {startChunk?: number; voice?: string}) {
   const startChunk = Math.max(0, options?.startChunk ?? 0)
   const voice = options?.voice || settings.voice || "heart"
+  const generation = speechGeneration
+  const progressFile = speechProgressFile()
+  const remaining = Math.max(1, Math.ceil(text.length / 420) - startChunk)
+  const base = process.env.TUI_VOICE_TTS_PROVIDER?.trim().toLowerCase() === "migraphx"
+    ? 600000 : 240000
+  const timeout = Math.min(1800000, Math.max(base, remaining * 60000))
   prewarmWorkers()
   speechQueue = speechQueue.then(async () => {
-    if (!readAloudEnabled()) return
-    while (active()) await delay(250)
-    try { rmSync(SPEECH_PROGRESS, {force: true}) } catch {}
-    const state = {text, voice, startChunk}
+    if (!readAloudEnabled() || generation !== speechGeneration) return
+    while (active()) {
+      if (generation !== speechGeneration) return
+      await delay(250)
+    }
+    // Mute or teardown may have happened while dictation was finishing.
+    if (!readAloudEnabled() || generation !== speechGeneration) return
+    try { rmSync(progressFile, {force: true}) } catch {}
+    const state = {text, voice, startChunk, progressFile}
     speechState = state
     try {
       await helperPayload([
         "say", "--text", text, "--voice", voice,
         "--start-chunk", String(startChunk),
-        "--progress-file", SPEECH_PROGRESS,
-      ], process.env.TUI_VOICE_TTS_PROVIDER?.trim().toLowerCase() === "migraphx" ? 600000 : 240000,
-      process => { speechChild = process })
+        "--progress-file", progressFile,
+      ], timeout, process => { if (speechState === state) speechChild = process })
       interruptedSpeech = null
     } catch (error: any) {
-      if (error?.name !== "VoiceCancelled" && speechState === state) logError("read-aloud", error)
-      // A mute/interrupt keeps interruptedSpeech for resume.
-      if (error?.name !== "VoiceCancelled" && speechState === state && readAloudEnabled()) {
-        toast(context, error?.message || "Local read-aloud failed.", "error")
+      if (error?.name !== "VoiceCancelled" && speechState === state) {
+        logError("read-aloud", error)
+        let chunk = startChunk
+        try {
+          const progress = JSON.parse(readFileSync(progressFile, "utf8"))
+          if (Number.isInteger(progress?.chunk)) chunk = progress.chunk
+        } catch {}
+        // Keep a resume point instead of losing a long reply to the deadline.
+        interruptedSpeech = {text, voice, startChunk: chunk}
+        if (readAloudEnabled()) {
+          toast(context, `${error?.message || "Local read-aloud failed."} Mute and unmute to resume.`, "error")
+        }
       }
     } finally {
       if (speechState === state) speechState = null
+      try { rmSync(progressFile, {force: true}) } catch {}
     }
   }).catch(() => {})
 }
@@ -725,15 +813,15 @@ function VoiceButton(props: {sessionID?: string; panel: any}) {
   }
   createEffect(() => {
     if (props.sessionID && props.sessionID !== lastSession) {
-      // A recording belongs to the old session and is canceled. A turn already
-      // transcribing is allowed to finish and queue into that session.
-      if (lastSession && active() && phase() === "listening") stopVoice()
+      // Thinking/listening belong to the old session and are canceled. A turn
+      // already transcribing is allowed to finish and queue into that session.
+      if (lastSession && active() && phase() !== "transcribing") cancelDictation()
       lastSession = props.sessionID
     }
   })
   const indicator = () =>
     phase() === "listening" ? {glyph: "●", color: "#f4b65f"}
-      : phase() === "transcribing" ? {glyph: "◐", color: "#99e7ff"}
+      : phase() === "transcribing" || phase() === "thinking" ? {glyph: "◐", color: "#99e7ff"}
       : phase() === "error" ? {glyph: "✕", color: "#fa9e95"}
       : {glyph: "○", color: "#3ca9e8"}
   return (
