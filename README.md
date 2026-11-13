@@ -1,33 +1,28 @@
-# tui-voice
+<p align="center">
+  <img src="docs/media/tui-voice-logo.png" width="168" alt="TUI Voice logo: a cyan terminal prompt and waveform with an amber cursor">
+</p>
 
-Local voice dictation and read-aloud for the **OpenCode TUI**.
+<h1 align="center">tui-voice</h1>
 
-Speak into the Windows microphone; the plugin transcribes with local Whisper and
-types the text into the OpenCode message box. It never sends the prompt. Completed
-assistant replies can also be read aloud with local Kokoro voices.
+<p align="center">
+  <strong>Speak your prompts. Hear your replies.</strong><br>
+  Local voice dictation and read-aloud for the OpenCode TUI.
+</p>
 
-No cloud service, no TV, no Control Center login.
+<p align="center">
+  <a href="docs/SETTINGS.md">Settings</a> ·
+  <a href="docs/TROUBLESHOOTING.md">Troubleshooting</a> ·
+  <a href="docs/AMD_GPU.md">AMD GPU setup</a>
+</p>
 
-## Features
+## Quick start
 
-- **Dictation into the draft** — one turn, local Whisper, text in the message box. Works from the home screen and `/new`; the first press opens a session.
-- **Silence auto-stop** — normal turns end after a pause; a 60 s hard maximum only stops a turn that never pauses.
-- **Works during a reply** — transcribes immediately and queues the draft until
-  the message box returns.
-- **Read-aloud** — speaks completed assistant replies through Windows speakers.
-- **Reply sound** — the speaker segment of the same footer panel stops current playback and toggles
-  reply read-aloud without opening settings. Unmuting resumes the interrupted reply
-  from the current local speech chunk.
-- **Settings dialog** — tune timing, microphone, gain, silence threshold, voice;
-  test the mic without recording a prompt.
-- **Global** — loaded once from `~/.config/opencode/cli.json`, across all projects.
+Requires **WSL2**, OpenCode with TUI plugins (verified on **v2.2.6**), Windows
+**FFmpeg / DirectShow**, and an installed local **Whisper/Kokoro** stack.
+[Runtime paths](#runtime-paths) cover its external models and Python environments.
 
-## Install
-
-This is a TUI-only OpenCode plugin, so it belongs in the CLI config, not the
-server plugin list.
-
-Add the repository to `~/.config/opencode/cli.json`:
+**1. Register your checkout.** Add its absolute path (`pwd`) to `plugins` in
+`~/.config/opencode/cli.json`, preserving existing entries. Current installation:
 
 ```json
 {
@@ -35,207 +30,88 @@ Add the repository to `~/.config/opencode/cli.json`:
 }
 ```
 
-Preserve any unrelated CLI settings in that file.
-
-**Restart the TUI completely.** A TUI-only plugin added or moved on disk is not
-picked up by `/reload` alone.
-
-Verify:
+**2. Set your voice service path** in the WSL shell that launches OpenCode:
 
 ```bash
+export TUI_VOICE_SERVICE="$HOME/repos/fire-tv-next/lulu-launcher/service"
+export TUI_VOICE_PYTHON="$TUI_VOICE_SERVICE/.venv/bin/python"
 opencode plugin list
 ```
 
-The list should include `/home/brajam/repos/tui-voice`.
+Persist these exports for future launches. The plugin list should show your checkout.
 
-## Use
+**3. Fully restart the TUI, then press `F9`.** `/reload` alone will not load a new
+plugin path.
 
-Open a chat session and use the bottom footer button or a shortcut:
+## Controls
 
-| Action | Control |
-| --- | --- |
-| Dictate | status circle + `🎙` microphone in a compact rounded footer panel; the circle changes: `○` idle, amber `●` listening, cyan `◐` transcribing, `✕` error |
-| Dictate | `Ctrl+Alt+V` |
-| Dictate | `F9` |
-| Dictate | `/dictate` |
-| Reply sound | `🔊` / `🔇` speaker segment in the footer panel |
-| Reply sound | `Ctrl+Alt+M` or `F10` |
-| Settings | `Ctrl+Alt+S` |
-| Settings | Command palette → **Voice: Settings** |
+The microphone and speaker share one compact panel in the bottom footer.
 
-Speak normally. The button shows `Listening`, then `Transcribing`; the transcript
-appears in the message box. Edit it and send it yourself.
-
-If a reply is still running, the transcript is held and inserted when the message
-box returns. A second press while listening stops the recording at that point and
-transcribes everything captured so far.
-
-## Settings
-
-The settings screen is a centered, native-sized OpenCode dialog using the active
-theme. Keyboard: `↑↓` select, `←→` change, `Enter` choose, `Esc` close.
-
-| Setting | Default | What it does |
+| Action | Shortcut | Footer |
 | --- | --- | --- |
-| Finish after a pause | 1.5 s | Silence before the turn ends |
-| Maximum turn | 60 s | Hard stop only if silence is never detected |
-| Input | Automatic | Windows microphone; automatic prefers the real input |
-| Silence threshold | −35 dB | Higher values (−25) treat more room noise as silence |
-| Input gain | Off | Boost a quiet mic; try 6–12 dB |
-| Test microphone | — | Records 2 s and reports RMS/peak |
-| Read replies aloud | On | Local Kokoro read-back; also toggled by the footer speaker icon |
-| Read-aloud voice | Heart | Heart, Velvet, English Rose, Dora |
-| Test read-aloud | — | Plays a sample so mute/unmute resume can be checked |
-| Reset to defaults | — | Restores the values above |
+| Dictate / finish the recording | `F9` or `Ctrl+Alt+V` | Microphone |
+| Mute / resume read-aloud | `F10` or `Ctrl+Alt+M` | Speaker |
+| Open voice settings | `Ctrl+Alt+S` | — |
 
-### If words are missing
+Or use `/dictate`. Speak, pause, and review your draft. **You decide when to send.**
+Dictate from home or during a reply; transcripts wait for the message box.
 
-1. Increase **Finish after a pause** to 0.6–0.8 s. This is the usual fix for
-   clipped sentence endings.
-2. Run **Test microphone**. `quiet`/`silent` means gain or device selection is the
-   problem.
-3. Raise **Input gain** for a quiet input.
-4. Adjust **Silence threshold** if room noise prevents auto-stop.
-5. Keep **Maximum turn** long; normal turns end on a pause. It is only a safety stop.
+Choose **Heart**, **Velvet**, **English Rose**, or **Dora** for completed replies.
+Defaults: **1.5 s** pause, **60 s** maximum turn, read-aloud **on**. Settings are
+saved globally.
 
-The virtual Steam Streaming Microphone is silent on this machine. Automatic
-selection prefers the Focusrite Analogue input; choose **Input** explicitly if you
-speak into something else.
+## Local speech, ready between turns
 
-## How it works
+Warm workers reuse loaded models and prepare speech one chunk ahead. Recognition,
+synthesis, and diagnostic logs stay local; the helper cleans up temporary audio.
 
-```
-footer button / shortcut (home or `/new` opens a session)
-        │
-        ▼
-voice_helper.py record
-  ffmpeg dshow → 16 kHz WAV → silence stop
-        │
-        ▼
-voice_helper.py transcribe
-  long turns split under 28 s, then warm Whisper worker
-  text joined in order (cold service fallback)
-        │
-        ▼
-message box draft (never auto-sent)
-```
+CPU uses **FP32 Kokoro**. [AMD MIGraphX](docs/AMD_GPU.md) is opt-in; RX 7900 XT
+inference remains unverified in the recorded hardware acceptance.
 
-Read-aloud listens to completed assistant text in the current session and runs
-`voice_helper.py say` with the selected Kokoro voice. A persistent warm TTS worker
-keeps the ONNX voice loaded between chunks and replies. CPU uses the pinned FP32
-`kokoro-v1.0.onnx` by default; INT8 remains available with
+## Runtime paths
+
+<details>
+<summary><strong>Custom locations, model selection, and worker commands</strong></summary>
+
+Set overrides in the environment that launches OpenCode. Set
+`TUI_VOICE_PYTHON` explicitly when relocating the service: `TUI_VOICE_SERVICE`
+does not change the TUI's built-in interpreter path.
+
+| Dependency | Default location or value | Override |
+| --- | --- | --- |
+| Voice service | `~/repos/fire-tv-next/lulu-launcher/service` | `TUI_VOICE_SERVICE` |
+| Models and worker runtimes | `voice` beside the service directory | `TUI_VOICE_VOICE_DIR` |
+| TUI helper interpreter | `/home/brajam/repos/fire-tv-next/lulu-launcher/service/.venv/bin/python` | `TUI_VOICE_PYTHON` |
+| Warm Whisper interpreter | `VOICE_DIR/.asr-venv/bin/python` | `TUI_VOICE_ASR_PYTHON` |
+| Warm Kokoro interpreter | `VOICE_DIR/.venv/bin/python` | `TUI_VOICE_TTS_PYTHON` |
+| Windows FFmpeg | Discovered from the Windows installation | `TUI_VOICE_FFMPEG` |
+| Microphone | Automatic selection | `TUI_VOICE_MIC` |
+| Kokoro provider | `cpu` | `TUI_VOICE_TTS_PROVIDER=cpu` or `migraphx` |
+| Kokoro model | `kokoro-v1.0.onnx` (FP32) | `TUI_VOICE_TTS_MODEL` |
+
+`VOICE_DIR` means the voice models/runtime directory above. Selected models and
+voices must be pinned in its `neural-models.json`. INT8 remains available with
 `TUI_VOICE_TTS_MODEL=kokoro-v1.0.int8.onnx`.
 
-The plugin depends on the existing local voice stack:
-
-| Dependency | Default | Override |
-| --- | --- | --- |
-| Whisper/Kokoro service | `~/repos/fire-tv-next/lulu-launcher/service` | `TUI_VOICE_SERVICE` |
-| Voice models / worker runtimes | `lulu-launcher/voice` | `TUI_VOICE_VOICE_DIR` |
-| Python | service `.venv/bin/python` | `TUI_VOICE_PYTHON` |
-| Warm ASR Python | `voice/.asr-venv/bin/python` | `TUI_VOICE_ASR_PYTHON` |
-| Warm TTS Python | `voice/.venv/bin/python` | `TUI_VOICE_TTS_PYTHON` |
-| Windows ffmpeg | WinGet Gyan.FFmpeg auto-discovery | `TUI_VOICE_FFMPEG` |
-| Microphone | automatic | `TUI_VOICE_MIC` |
-
-Warm workers are optional in the default CPU configuration. If either is absent
-or fails, the helper uses the cold local path. Explicit GPU selection reports an
-error instead of silently running TTS on the CPU. Manage workers with:
+From the plugin checkout, with the quick-start exports set:
 
 ```bash
-~/repos/fire-tv-next/lulu-launcher/service/.venv/bin/python voice_helper.py warm --status
-~/repos/fire-tv-next/lulu-launcher/service/.venv/bin/python voice_helper.py warm --start
-~/repos/fire-tv-next/lulu-launcher/service/.venv/bin/python voice_helper.py warm --stop
+"$TUI_VOICE_PYTHON" voice_helper.py devices
+"$TUI_VOICE_PYTHON" voice_helper.py warm --status
+"$TUI_VOICE_PYTHON" voice_helper.py warm --start
+"$TUI_VOICE_PYTHON" voice_helper.py warm --stop
 ```
 
-Both keep audio local and exit after 30 idle minutes; the plugin starts them again
-before the next dictation or reply.
+Workers exit after 30 idle minutes by default and are started again when needed.
+Restart TTS with `warm --restart --kind tts` after changing its provider, model, or
+interpreter. CPU mode retains the cold local fallback; an explicit GPU request
+fails clearly if the requested backend is unavailable.
 
-### AMD GPU read-aloud on WSL2
+</details>
 
-Kokoro can request AMD's `MIGraphXExecutionProvider` with
-`TUI_VOICE_TTS_PROVIDER=migraphx`; `cpu` remains the default. GPU mode selects
-`kokoro-v1.0.onnx` (FP32) and requires a matching ROCm/MIGraphX installation in the
-TTS worker's Python environment. The selected model and voice bundle must be
-pinned in the existing local model manifest.
+## Further reading
 
-Follow [`docs/AMD_GPU.md`](docs/AMD_GPU.md) for RX 7900 XT setup, model preparation,
-worker restart, and a real inference check. GPU availability is checked through
-WSL's `/dev/dxg` and the AMD runtime. **RX 7900 XT synthesis has not yet been
-verified on the owner's machine.** The 2026-11-12 attempt installed the ROCm 10.1
-stack but stopped at the Windows display driver (`31.0.14000.58004`, 2022-12-02),
-which rejects the GPU address reservation ROCm needs; CPU remains the working
-backend. Whisper dictation continues using its current CPU worker.
+[Documentation](docs/README.md) · [Runbook](docs/RUNBOOK.md) ·
+[Architecture](docs/ARCHITECTURE.md) · [Testing](docs/TESTING.md) · [Handoff](HANDOFF.md)
 
-## Privacy
-
-- Audio is written to the Windows temp directory only for ffmpeg, then deleted
-  immediately after transcription.
-- The transcript goes only into the local OpenCode message box.
-- Read-aloud uses the local Kokoro model and Windows speakers.
-- No cloud STT/TTS, no TV/ADB, no automatic send, no upload.
-- No recordings, `.wav` files, or transcripts are committed.
-
-## Requirements
-
-- OpenCode TUI with TUI plugin support (verified on v2.2.6).
-- Windows `ffmpeg.exe` with DirectShow microphone support.
-- The local Whisper/Kokoro service and its `.venv` at the default path, or the
-  environment overrides above.
-- WSL2 is the supported environment.
-
-## Troubleshooting
-
-- **Plugin missing** — confirm the `cli.json` path, then close and reopen the TUI.
-  `/reload` is not enough for a new TUI-only plugin path.
-- **Button click does nothing** — use `Ctrl+Alt+V`, `F9`, or `/dictate`; the
-  keyboard paths are verified. Mouse delivery depends on terminal/tmux mouse mode.
-- **Footer never changes to Listening** — the plugin is not loaded in that TUI.
-- **No transcript** — run **Test microphone**, check the selected input, then raise
-  gain or pause duration. Dictation works from home and `/new`; if it still
-  refuses, restart the TUI to load the current plugin.
-- **Something failed** — failures are appended to
-  `~/.local/state/tui-voice/voice.log` with the recording path and traceback.
-  Include the last entries in a bug report. No audio or cloud data is logged.
-- **Always waits to the maximum** — room noise is above the silence threshold;
-  raise the threshold toward −25 dB.
-- **Read-aloud is silent** — check for `🔇` in the footer, enable it in
-  settings, select a voice, and check the Windows default output device. Unmuting
-  resumes an interrupted reply rather than dropping it.
-- **Theme looks wrong** — reopen the dialog after changing the TUI theme; the
-  dialog uses `theme.surface("dialog")`.
-
-## Development
-
-```bash
-cd ~/repos/tui-voice
-
-python3 -m py_compile voice_helper.py
-
-SERVICE=~/repos/fire-tv-next/lulu-launcher/service
-$SERVICE/.venv/bin/python voice_helper.py devices
-$SERVICE/.venv/bin/python voice_helper.py transcribe \
-  --wav ~/repos/fire-tv-next/lulu-launcher/voice/fixtures/short-2s.wav
-```
-
-After changes, reopen the TUI and run the fresh-TUI gate in
-[`docs/TESTING.md`](docs/TESTING.md#fresh-tui-gate).
-
-## Status
-
-Verified: fixture transcript inserted without sending; settings dialog and values;
-read-aloud helper spawned with the correct reply; footer 🔊/🔇 speaker icon stops
-playback and resumes it on unmute; microphone test; global load from outside the
-repository.
-
-Not verified: physical speech accuracy/latency, mouse-click activation of the
-footer button, and a physical dictation queued behind a live model turn. See
-[`HANDOFF.md`](HANDOFF.md).
-
-## Documentation
-
-- [`AGENTS.md`](AGENTS.md) — agent rules and verification checklist
-- [`rules.md`](rules.md) — current product contract
-- [`HANDOFF.md`](HANDOFF.md) — current state, evidence, limits
-- [`docs/AMD_GPU.md`](docs/AMD_GPU.md) — AMD GPU setup and inference verification on WSL2
-- [`docs/`](docs/README.md) — architecture, settings, testing, troubleshooting, runbook
+Contributing? Start with [AGENTS.md](AGENTS.md) and the [product rules](rules.md).
