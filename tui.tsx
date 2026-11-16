@@ -1,10 +1,12 @@
 import { Plugin, usePlugin } from "@opencode/plugin/tui"
-import { createEffect, createSignal, For } from "solid-js"
+import { createEffect, createSignal, For, onCleanup } from "solid-js"
 import { spawn, type ChildProcess } from "node:child_process"
 import { appendFileSync, mkdirSync, readFileSync, rmSync } from "node:fs"
 import { homedir } from "node:os"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
+import { readLastReply } from "./read_last"
+import { jsonLines, LiveDraft, locateComposer } from "./live_draft"
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const HELPER = join(HERE, "voice_helper.py")
@@ -27,7 +29,7 @@ function logError(where: string, error: any, detail?: string) {
 }
 
 type Phase = "idle" | "listening" | "transcribing" | "thinking" | "speaking" | "error"
-type Settings = { mic: string; voice: string; seconds: number; silence: number; threshold: number; gain: number; readAloud: boolean }
+type Settings = { mic: string; voice: string; threshold: number; gain: number; readAloud: boolean }
 
 class VoiceCancelled extends Error {
   constructor() {
@@ -39,19 +41,23 @@ class VoiceCancelled extends Error {
 const [active, setActive] = createSignal(false)
 const [phase, setPhase] = createSignal<Phase>("idle")
 const [settingsOpen, setSettingsOpen] = createSignal(false)
-let settings: Settings = { mic: "", voice: "heart", seconds: 60, silence: 1.5, threshold: -35, gain: 0, readAloud: true }
+let settings: Settings = { mic: "", voice: "heart", threshold: -35, gain: 0, readAloud: true }
 let updateSettings: ((mutation: (draft: Settings) => void) => Promise<void>) | undefined
 type DictationTurn = {
   id: number
   sessionID: string
   child: ChildProcess | null
-  childStartedAt: number
+  ready: boolean
   cancelled: boolean
   stopRequested: boolean
 }
 let dictationTurn: DictationTurn | null = null
 let dictationCounter = 0
-let pendingDrafts: Array<{sessionID: string; text: string}> = []
+type Draft = {sessionID: string; text: string; writer: LiveDraft; final: boolean}
+let pendingDrafts: Draft[] = []
+const composers = new Map<string, {marker: any; normal: () => boolean}>()
+let lastMicrophone = ""
+let lastDictation: {sessionID: string; text: string} | null = null
 let pendingFlush = false
 let speechQueue: Promise<void> = Promise.resolve()
 let speechChild: ChildProcess | null = null
@@ -82,20 +88,32 @@ function toast(context: any, message: string, variant: "info" | "success" | "war
   context.ui.toast.show({message, variant, duration: 3500})
 }
 
-function helperPayload(args: string[], timeoutMs: number, track?: (child: ChildProcess | null) => void): Promise<any> {
+function helperPayload(args: string[], timeoutMs: number | null, track?: (child: ChildProcess | null) => void,
+  onEvent?: (event: any) => void): Promise<any> {
   return new Promise((resolve, reject) => {
     if (!PYTHON) { reject(new Error("TUI_VOICE_PYTHON is not configured")); return }
     const childProcess = spawn(PYTHON, [HELPER, ...args], {stdio: ["ignore", "pipe", "pipe"]})
     track?.(childProcess)
     let stdout = ""
     let stderr = ""
-    const timer = setTimeout(() => {
+    const timer = timeoutMs === null ? undefined : setTimeout(() => {
       expectedExit.add(childProcess)
       childProcess.kill("SIGTERM")
       logError("helper timeout", new Error("Voice helper timed out"), args.join(" "))
       reject(new Error("Voice helper timed out"))
     }, timeoutMs)
-    childProcess.stdout?.on("data", data => { stdout += String(data) })
+    const events = jsonLines(event => { if (event.event) onEvent?.(event) })
+    childProcess.stdout?.setEncoding("utf8")
+    childProcess.stdout?.on("data", data => {
+      stdout += data
+      if (onEvent) {
+        try { events(data) } catch (error) {
+          expectedExit.add(childProcess)
+          childProcess.kill("SIGTERM")
+          reject(error)
+        }
+      }
+    })
     childProcess.stderr?.on("data", data => { stderr += String(data) })
     childProcess.on("error", error => {
       clearTimeout(timer)
@@ -146,7 +164,7 @@ function ownsDictation(turn: DictationTurn) {
 
 function beginDictation(): DictationTurn {
   const turn: DictationTurn = {
-    id: ++dictationCounter, sessionID: "", child: null, childStartedAt: 0,
+    id: ++dictationCounter, sessionID: "", child: null, ready: false,
     cancelled: false, stopRequested: false,
   }
   dictationTurn = turn
@@ -158,13 +176,9 @@ function beginDictation(): DictationTurn {
 function requestDictationStop(turn: DictationTurn) {
   turn.stopRequested = true
   const child = turn.child
-  if (!child) return
-  // SIGUSR1 is only safe after the helper has installed its handler.
-  const elapsed = turn.childStartedAt ? Date.now() - turn.childStartedAt : 0
-  setTimeout(() => {
-    if (!ownsDictation(turn) || turn.child !== child) return
-    try { child.kill("SIGUSR1") } catch {}
-  }, Math.max(0, 700 - elapsed))
+  // The helper explicitly acknowledges that its signal handlers are installed.
+  if (!child || !turn.ready || !ownsDictation(turn)) return
+  try { child.kill("SIGUSR1") } catch {}
 }
 
 function cancelDictation() {
@@ -206,51 +220,12 @@ function speechProgressFile() {
   return join(SPEECH_DIR, `speech-${process.pid}-${++speechJobCounter}.json`)
 }
 
-function placeholderText(node: any) {
-  const value = node?.placeholder
-  if (typeof value === "string") return value
-  if (value && typeof value.plainText === "string") return value.plainText
-  if (value && typeof value.toString === "function") return String(value)
-  return ""
-}
-
-function findPromptEditor(renderer: any) {
-  const stack = renderer?.root ? [renderer.root] : []
-  const editors: any[] = []
-  while (stack.length) {
-    const node = stack.pop()
-    if (node?.editBuffer && typeof node.focus === "function") editors.push(node)
-    const children = node?.getChildren?.() ?? []
-    for (const child of children) stack.push(child)
-  }
-  return editors.find(editor => /ask anything|message|prompt|reply/i.test(placeholderText(editor))) ?? editors[0] ?? null
-}
-
-function insertIntoPrompt(context: any, text: string) {
-  const editor = findPromptEditor(context.renderer)
-  if (!editor) return false
-  // Transcripts are inserted as text, never as keystrokes that could submit.
-  const safe = text.replace(/[\u0000-\u001f\u007f]+/g, " ").trim()
-  if (!safe) return false
-  editor.focus()
-  const stdin = context.renderer.stdin
-  if (stdin && typeof stdin.emit === "function") {
-    stdin.emit("data", Buffer.from(safe))
-    return true
-  }
-  if (!editor.editBuffer) return false
-  const current = editor.editBuffer.getText()
-  const prefix = current && !/\s$/.test(current) ? " " : ""
-  editor.editBuffer.setText(current + prefix + safe)
-  editor.requestRender?.()
-  return true
-}
-
-async function sessionRunning(context: any, sessionID: string) {
-  const messages = await context.client.session.context({sessionID})
-  return (Array.isArray(messages) ? messages : []).some(
-    message => message?.type === "assistant" && !message?.time?.completed,
-  )
+function writeDraft(context: any, draft: Draft) {
+  const route = context.ui.router.current()
+  if (route?.type !== "session" || route.sessionID !== draft.sessionID || settingsOpen()) return "blocked"
+  const entry = composers.get(draft.sessionID)
+  if (!entry?.normal() || context.keymap.mode.current() !== "base") return "blocked"
+  return draft.writer.apply(locateComposer(entry.marker), draft.text)
 }
 
 async function flushPending(context: any) {
@@ -259,41 +234,25 @@ async function flushPending(context: any) {
   try {
     const end = Date.now() + 300000
     while (pendingDrafts.length && Date.now() < end) {
-      if (active()) { await delay(300); continue }
-      const route = context.ui.router.current()
-      const draft = pendingDrafts.find(
-        item => route?.type === "session" && item.sessionID === route.sessionID)
-      if (!draft) { await delay(500); continue }
-      if (await sessionRunning(context, draft.sessionID)) { await delay(500); continue }
-      await delay(80)
-      // The route can change during either await; never insert into another chat.
-      const currentRoute = context.ui.router.current()
-      if (currentRoute?.type !== "session" || currentRoute.sessionID !== draft.sessionID) {
-        await delay(200)
-        continue
+      for (const draft of [...pendingDrafts]) {
+        const result = writeDraft(context, draft)
+        if (result === "edited" || (result === "written" && draft.final)) {
+          pendingDrafts = pendingDrafts.filter(item => item !== draft)
+          if (result === "edited") {
+            toast(context, "Draft edited; voice won't overwrite it. Use /voice-text to recover the transcript.", "warning")
+          }
+        }
       }
-      const latest = pendingDrafts.find(item => item.sessionID === draft.sessionID)
-      if (!latest) continue
-      if (insertIntoPrompt(context, latest.text)) {
-        pendingDrafts = pendingDrafts.filter(item => item !== latest)
-        toast(context, "Inserted into the message box. Edit it, then send.", "success")
-        if (pendingDrafts.some(item => item.sessionID === draft.sessionID)) continue
-      } else {
-        // Leave it queued so a later dictation or route change can retry.
-        toast(context, "Could not find the message box.", "warning")
-      }
-      break
+      await delay(150)
     }
   } finally {
     pendingFlush = false
   }
 }
 
-function queueDraft(context: any, sessionID: string, text: string, running: boolean) {
-  const existing = pendingDrafts.find(item => item.sessionID === sessionID)
-  if (existing) existing.text += " " + text
-  else pendingDrafts.push({sessionID, text})
-  if (running) toast(context, "Transcribed. Will insert when the reply finishes.", "info")
+function queueDraft(context: any, draft: Draft) {
+  if (draft.writer.edited) return
+  if (!pendingDrafts.includes(draft)) pendingDrafts.push(draft)
   void flushPending(context)
 }
 
@@ -322,46 +281,77 @@ async function toggleVoice(context: any) {
     return
   }
   const turn = beginDictation()
+  let draft: Draft | null = null
   try {
     const route = await ensureSession(context)
     if (!ownsDictation(turn)) return
     turn.sessionID = route.sessionID
-    setPhase("listening")
+    draft = {sessionID: turn.sessionID, text: "", writer: new LiveDraft(), final: false}
     prewarmWorkers()
-    toast(context, "Listening… speak now, then pause.", "info")
+    toast(context, "Opening microphone…", "info")
     const args = [
-      "record",
-      "--seconds", String(settings.seconds ?? 60),
-      "--silence", String(settings.silence ?? 1.5),
+      "dictate",
       "--threshold", String(settings.threshold ?? -35),
       "--gain", String(settings.gain ?? 0),
     ]
-    if (settings.mic) args.push("--mic", settings.mic)
-    const recording = await helperPayload(args, 180000, process => {
+    const mic = settings.mic || lastMicrophone
+    if (mic) args.push("--mic", mic)
+    const capture = () => helperPayload(args, null, process => {
       if (!ownsDictation(turn)) return
       turn.child = process
-      turn.childStartedAt = process ? Date.now() : 0
-      if (process && turn.stopRequested) requestDictationStop(turn)
+      turn.ready = false
+    }, event => {
+      if (!ownsDictation(turn) || !draft) return
+      if (event.event === "starting") {
+        turn.ready = true
+        if (turn.stopRequested) requestDictationStop(turn)
+      } else if (event.event === "listening") {
+        lastMicrophone = event.device || ""
+        setPhase("listening")
+        toast(context, "Microphone on. Press F9 or the mic again to stop.", "info")
+      } else if (event.event === "transcribing") {
+        setPhase("transcribing")
+      } else if (event.event === "partial" && typeof event.text === "string") {
+        draft.text = event.text
+        lastDictation = {sessionID: turn.sessionID, text: event.text}
+        queueDraft(context, draft)
+      }
     })
-    if (!ownsDictation(turn)) return
-    setPhase("transcribing")
-    const heard = await helperPayload(["transcribe", "--wav", recording.path], 150000,
-      process => { if (ownsDictation(turn)) turn.child = process })
+    let heard: any
+    try {
+      heard = await capture()
+    } catch (error) {
+      // A device can disappear between turns. Only retry an automatic cached
+      // choice, before any transcript, never an explicitly selected device.
+      if (!mic || settings.mic || draft.text || !ownsDictation(turn) || turn.stopRequested) throw error
+      lastMicrophone = ""
+      args.splice(args.indexOf("--mic"), 2)
+      heard = await capture()
+    }
     if (!ownsDictation(turn)) return
     const text = String(heard.text || "").trim()
     if (!text) { toast(context, "I did not catch that. Try again.", "warning"); return }
-    const running = await sessionRunning(context, turn.sessionID)
-    queueDraft(context, turn.sessionID, text, running)
+    draft.text = text
+    lastDictation = {sessionID: turn.sessionID, text}
+    queueDraft(context, draft)
+    if (writeDraft(context, draft) === "blocked") {
+      toast(context, "Transcribed. Draft will update when its message box returns.", "info")
+    }
   } catch (error: any) {
     if (error?.name === "VoiceCancelled" || turn.cancelled || dictationTurn !== turn) return
     // A stop that arrives before the helper installs SIGUSR1 can terminate it
     // with a signal; the user asked to cancel this turn, not to see an error.
     if (turn.stopRequested && /exited null|returned no audio/.test(String(error?.message || ""))) return
     logError("dictation", error)
+    lastMicrophone = ""
     cancelDictation()
     setPhase("error")
     toast(context, error?.message || "Voice input failed.", "error")
   } finally {
+    if (draft) {
+      draft.final = true
+      if (draft.text && !turn.cancelled) queueDraft(context, draft)
+    }
     finishDictation(turn)
   }
 }
@@ -393,7 +383,7 @@ function resumeInterruptedSpeech(context: any) {
   speakReply(context, pending.text, {startChunk: pending.startChunk, voice: pending.voice})
 }
 
-function speakReply(context: any, text: string, options?: {startChunk?: number; voice?: string}) {
+function speakReply(context: any, text: string, options?: {startChunk?: number; voice?: string; sessionID?: string}) {
   const startChunk = Math.max(0, options?.startChunk ?? 0)
   const voice = options?.voice || settings.voice || "heart"
   const generation = speechGeneration
@@ -404,13 +394,16 @@ function speakReply(context: any, text: string, options?: {startChunk?: number; 
   const timeout = Math.min(1800000, Math.max(base, remaining * 60000))
   prewarmWorkers()
   speechQueue = speechQueue.then(async () => {
+    const sameSession = () => !options?.sessionID || (
+      context.ui.router.current()?.type === "session" &&
+      context.ui.router.current()?.sessionID === options.sessionID)
     if (!readAloudEnabled() || generation !== speechGeneration) return
     while (active()) {
-      if (generation !== speechGeneration) return
+      if (generation !== speechGeneration || !sameSession()) return
       await delay(250)
     }
     // Mute or teardown may have happened while dictation was finishing.
-    if (!readAloudEnabled() || generation !== speechGeneration) return
+    if (!readAloudEnabled() || generation !== speechGeneration || !sameSession()) return
     try { rmSync(progressFile, {force: true}) } catch {}
     const state = {text, voice, startChunk, progressFile}
     speechState = state
@@ -471,8 +464,6 @@ type SettingsRow =
       activate?: () => void
     }
 
-const SILENCE_CHOICES = [0.8, 1.0, 1.2, 1.5, 2.0, 2.5]
-const MAX_CHOICES = [15, 20, 30, 45, 60, 90]
 const THRESHOLD_CHOICES = [-25, -30, -35, -40, -45]
 const GAIN_CHOICES = [0, 3, 6, 9, 12, 15, 18]
 const VOICE_PRESETS = [
@@ -519,8 +510,6 @@ function VoiceSettings(props: {onClose: () => void}) {
   const [devices, setDevices] = createSignal<string[]>([])
   const [testStatus, setTestStatus] = createSignal("")
 
-  const silence = () => Number(settings.silence ?? 1.5)
-  const maxSeconds = () => Number(settings.seconds ?? 60)
   const threshold = () => Number(settings.threshold ?? -35)
   const gain = () => Number(settings.gain ?? 0)
   const mic = () => settings.mic || "Automatic"
@@ -585,8 +574,6 @@ function VoiceSettings(props: {onClose: () => void}) {
     if (!updateSettings) return
     await updateSettings(draft => {
       draft.mic = ""
-      draft.seconds = 60
-      draft.silence = 1.5
       draft.threshold = -35
       draft.gain = 0
       draft.readAloud = true
@@ -599,19 +586,6 @@ function VoiceSettings(props: {onClose: () => void}) {
 
   const rows = () => {
     const list: SettingsRow[] = [
-      {kind: "section", title: "TIMING"},
-      {
-        kind: "item", id: "silence", label: "Finish after a pause",
-        description: "Default 1.5 s avoids cutting between words or thoughts. Lower it only if you want faster turns.",
-        value: () => `${silence().toFixed(1)} s`,
-        adjust: direction => cycleNumber("silence", SILENCE_CHOICES, 1.5, direction),
-      },
-      {
-        kind: "item", id: "seconds", label: "Maximum turn",
-        description: "Hard stop if silence is never detected. Normal turns end on a pause; keep this long so a long sentence is not cut off.",
-        value: () => `${maxSeconds()} s`,
-        adjust: direction => cycleNumber("seconds", MAX_CHOICES, 60, direction),
-      },
       {kind: "section", title: "MICROPHONE"},
       {
         kind: "item", id: "mic", label: "Input",
@@ -621,8 +595,8 @@ function VoiceSettings(props: {onClose: () => void}) {
         activate: selectMic,
       },
       {
-        kind: "item", id: "threshold", label: "Silence threshold",
-        description: "Higher values like -25 dB treat more room noise as silence. Lower values ignore only very quiet rooms.",
+        kind: "item", id: "threshold", label: "Speech threshold",
+        description: "Controls which audio is sent to recognition, not when recording stops. Lower it for quieter speech.",
         value: () => `${threshold()} dB`,
         adjust: direction => cycleNumber("threshold", THRESHOLD_CHOICES, -35, direction),
       },
@@ -668,7 +642,7 @@ function VoiceSettings(props: {onClose: () => void}) {
       {kind: "section", title: "BEHAVIOR"},
       {
         kind: "item", id: "reset", label: "Reset to defaults",
-        description: "1.5 s pause, 60 s maximum, -35 dB threshold, no gain, automatic microphone.",
+        description: "Manual on/off recording, -35 dB speech threshold, no gain, automatic microphone.",
         value: () => "Restore",
         activate: resetDefaults,
       },
@@ -871,12 +845,8 @@ export default Plugin.define({
   id: "tui.voice",
   async setup(context) {
     const [stored, update] = context.storage.store<Settings>("tui-voice", {
-      initial: {mic: "", voice: "heart", seconds: 60, silence: 1.5, threshold: -35, gain: 0, readAloud: true},
+      initial: {mic: "", voice: "heart", threshold: -35, gain: 0, readAloud: true},
     })
-    const current = stored as Settings
-    if ((Number(current.seconds) || 60) < 15 || (Number(current.silence) || 1.5) < 0.8) {
-      await update(draft => { draft.seconds = 60; draft.silence = 1.5 })
-    }
     settings = stored as Settings
     updateSettings = update
     onToggle = () => { void toggleVoice(context) }
@@ -914,11 +884,22 @@ export default Plugin.define({
     const offFooter = context.ui.slot({
       append: "prompt.footer",
       render: input => {
+        const [marker, setMarker] = createSignal<any>()
+        createEffect(() => {
+          const node = marker()
+          const sessionID = input.sessionID
+          if (!node || !sessionID) return
+          composers.set(sessionID, {marker: node, normal: () => input.mode === "normal"})
+          if (pendingDrafts.length) void flushPending(context)
+          onCleanup(() => {
+            if (composers.get(sessionID)?.marker === node) composers.delete(sessionID)
+          })
+        })
         if (settingsOpen()) return <box height={1} />
         const theme = context.theme.surface("dialog")
         const panel = theme.background?.raised?.max
         return (
-          <box flexDirection="row" height={1}>
+          <box flexDirection="row" height={1} ref={setMarker}>
             <text fg={panel}>▐</text>
             <box flexDirection="row" height={1} backgroundColor={panel}>
               <VoiceButton sessionID={input.sessionID} panel={panel} />
@@ -951,6 +932,46 @@ export default Plugin.define({
           bind: "ctrl+alt+v",
           palette: false,
           run: () => toggleVoice(context),
+        },
+        {
+          id: "tui.voice.recover",
+          title: "Voice: Insert last dictation text",
+          group: "Voice",
+          palette: true,
+          slash: {name: "voice-text"},
+          run: () => {
+            const route = context.ui.router.current()
+            if (route?.type !== "session" || lastDictation?.sessionID !== route.sessionID || !lastDictation?.text) {
+              toast(context, "No dictation to recover in this chat.", "info")
+              return
+            }
+            queueDraft(context, {...lastDictation, writer: new LiveDraft(), final: true})
+          },
+        },
+        {
+          id: "tui.voice.read-last",
+          title: "Voice: Read last reply aloud",
+          group: "Voice",
+          palette: true,
+          slash: {name: "read-last"},
+          run: async () => {
+            try {
+              await readLastReply(context, {
+                enabled: readAloudEnabled,
+                generation: () => speechGeneration,
+                notify: message => toast(context, message, "info"),
+                replay: (text, sessionID) => {
+                  stopSpeech()
+                  speechState = null
+                  interruptedSpeech = null
+                  speakReply(context, text, {sessionID})
+                },
+              })
+            } catch (error: any) {
+              logError("read-last", error)
+              toast(context, "Could not load the last reply. Try /read-last again.", "error")
+            }
+          },
         },
         {
           id: "tui.voice.mic",
@@ -991,6 +1012,8 @@ export default Plugin.define({
       offFooter()
       stopSpeech()
       stopVoice()
+      pendingDrafts = []
+      composers.clear()
     }
   },
 })

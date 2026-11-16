@@ -31,17 +31,22 @@ requirements remain.
 
 - A turn records the Windows microphone, transcribes locally, and **types the
   transcript into the OpenCode message box**. It must not cut off while the user is
-  still speaking: a long pause threshold and a long hard maximum are required.
+  still speaking. Dictation is a manual on/off toggle: stay on through pauses
+  and long turns until the user presses the microphone/shortcut again.
 - Dictation must start from the home screen and after `/new` without a manually
   opened session. The first press creates and opens a session when needed.
 - A second press while listening must gracefully stop the recording at that point
   and transcribe everything recorded so far. It must not drop the audio or force
   the user to wait for another silence.
 - Never send the prompt automatically. The user reviews and sends it.
+- Show local recognition in the message box while the user speaks, not only after
+  recording stops. Revise the live phrase without duplicating it or overwriting
+  manual draft edits. Keep capture independent of ASR latency and requests bounded.
 - If the session is replying and the message box is hidden, transcription still
   happens immediately; hold the draft and insert it when the message box returns.
-- A second press while listening must stop and transcribe immediately; the turn can
-  also finish on silence or the configured maximum.
+- Do not auto-finish on silence, a maximum turn duration, or a helper lifetime
+  timer. Keep local ASR requests bounded independently of recording duration;
+  genuine device/inference failures must be reported rather than hidden.
 - A turn longer than the ASR 32 s budget must be split into safe chunks and the
   text joined; it must never fail with "Audio duration outside finite budget".
 - Failures must append to the local log at `~/.local/state/tui-voice/voice.log`
@@ -61,9 +66,9 @@ requirements remain.
 ## Settings
 
 - Settings are global and persisted under `tui-voice`.
-- The screen tunes: pause before finishing, maximum turn, input device, silence
+- The screen tunes: input device, speech
   threshold, input gain, microphone test, read-aloud, read-aloud voice, reset.
-- Defaults: 1.5 s pause, 60 s maximum, automatic microphone, −35 dB, 0 dB gain,
+- Defaults: manual on/off recording, automatic microphone, −35 dB, 0 dB gain,
   read-aloud On, Heart.
 - Keyboard: `↑↓` select, `←→` change, `Enter` choose, `Esc` close.
 - Settings must affect the actual recorder, not just the UI.

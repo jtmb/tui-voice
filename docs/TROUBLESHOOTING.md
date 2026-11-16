@@ -30,15 +30,16 @@ Do not move it to the composer, a dialog, or an overlay.
    input; `quiet` means raise **Input gain**.
 3. `voice_helper.py devices` lists the inputs. The Steam Streaming Microphone is
    silent here; use the Focusrite input.
-4. Increase **Finish after a pause** if sentence endings are being cut off.
+4. Lower **Speech threshold** or raise gain for quiet words. Recording is manual
+   on/off; no pause or maximum-turn setting should stop it.
 5. Confirm the local service still has the Whisper model and Python environment:
    `~/repos/fire-tv-next/lulu-launcher/service`.
 
 ## "Audio duration outside finite budget"
 
-This was a helper bug for turns longer than the ASR 32 s limit. The helper now
-splits long recordings into chunks under 28 s, cuts at a quiet point, and joins the
-text. A 60 s turn is three chunks. If it appears again, the TUI is running an older
+Interactive dictation keeps ASR requests at eight seconds or less, independently
+of how long the microphone stays on. The separate file-transcription diagnostic
+splits long WAVs under 28 s. If it appears again, the TUI may be running an older
 plugin generation; close and reopen it.
 
 ## Where errors are logged
@@ -51,11 +52,9 @@ details, never audio or cloud data. Override the directory with
 
 ## It waits too long
 
-- Keep **Maximum turn** long. Normal turns end on a pause; the maximum is a safety stop.
-- Lower **Finish after a pause** only if you want faster turns. The default is
-  1.5 s so a brief pause or breath does not cut you off.
-- If it always runs to the maximum, room noise is above the silence threshold.
-  Raise the threshold toward −25 dB, or test the mic level first.
+- The microphone intentionally stays on through pauses. Press F9/the mic again
+  to switch it off. Legacy pause/maximum-turn values no longer affect dictation.
+- Text updates while recording; switching off finalizes the last phrase.
 
 ## Read-aloud does not work
 

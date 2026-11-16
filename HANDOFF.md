@@ -1,5 +1,235 @@
 # tui-voice handoff
 
+## 2026-11-16 — owner correction: microphone is an on/off toggle
+
+- Owner observed dictation cutting off mid-speech and explicitly requested
+  manual on/off. This supersedes all historical silence/maximum-turn behavior.
+  `rules.md`, `AGENTS.md` and current usage/settings/runbook docs now say so.
+- `voice_helper.py dictate` has no silence stop, ffmpeg `-t` cap or lifetime
+  timer. `tui.tsx` no longer passes timing settings or applies the five-minute
+  helper deadline. F9/the footer mic remains the graceful stop control.
+  Removed misleading pause/maximum-turn settings; saved legacy values remain
+  intact but are ignored. The separate two-second microphone diagnostic and
+  `record` command keep their intentionally bounded behavior.
+- Live phrase boundaries still bound individual ASR requests, not recording.
+  Added a bounded audio backlog failure for genuinely stalled inference; the
+  capture watchdog measures absence of PCM only, so silent input keeps it alive.
+  These report failures, not normal automatic recording completion.
+- Verification: **28 focused helper/streaming Python tests pass**, Ruff passes,
+  full TSX bundle passes, `git diff --check` passes. New regression feeds a
+  65-second silent pause between speech bursts (past the old 60-second cap),
+  verifies capture remains on, then explicitly switches off and checks graceful
+  `q` / final text. This is accelerated PCM coverage, not a 67-second hardware
+  capture. No need to repeat the unchanged native-editor/CPU fixture tests.
+- Checks used existing H routing, a fresh 2,000,000-B output estimate, 100-GB
+  combined allowance and 15-GiB C/H reserves. Removed completed generated
+  `build/manual-toggle-tui.mjs` (**40,588 B**); combined charge afterward
+  **6,934,885,921 B**. No services/models/config permissions changed; unrelated
+  edits and protected cleanup targets preserved.
+- Next owner check in a fresh TUI: F9 on → speak → pause → keep speaking →
+  F9 off. Words must keep updating and nothing is sent automatically.
+
+## 2026-11-16 — live dictation and intermittent pickup repair
+
+- Owner requested live text as speech is heard, fluent/performance improvements,
+  and comparison with `/home/brajam/repos/opencode-ghost`. Inspected its
+  `src/composer.ts` and footer registration in `src/tui.tsx` read-only. Kept its
+  useful pattern (footer-anchored composer lookup and native editor mutation),
+  not its ghost-placeholder behavior; dictation is real editable draft text.
+- New `live_dictation.py` runs one local ASR consumer alongside raw Windows
+  ffmpeg PCM capture. Natural phrase commits / eight-second caps bound requests;
+  preview snapshots are coalesced, not backlogged. No WAV files are created.
+  `voice_helper.py dictate` emits starting/listening/partial/transcribing JSON
+  events and a final result. Readiness now means PCM actually arrived; second
+  press uses an explicit helper signal-handler handshake, not a 700-ms guess.
+- `live_draft.ts` replaces only owned live text through native selection/insert
+  methods, preserving existing draft, Unicode offsets, typed suffix and caret.
+  `tui.tsx` registers per-session footer markers, streams revisions, and retains
+  queued hypotheses while the composer is absent/busy. Removed synthetic stdin
+  injection and repeated history/API polling. Switching chats cannot target a
+  different chat's editor. Manual edits to owned text pause replacement rather
+  than overwrite; `/voice-text` explicitly recovers the full last transcript
+  for that chat (may duplicate the kept partial). Never auto-send.
+- Actual intermittent failure reproduced: inherited
+  `/run/WSL/1826573_interop` timed out / returned `UtilAcceptVsock ... accept4
+  failed 110`. Existing `/run/WSL/1_interop` passed the same launch probe.
+  `windows_env()` verifies/reuses an existing healthy bridge in helper-child
+  environments only. No permission/WSL/service/runtime configuration changes.
+  Known microphones skip repeated enumeration; discovery has a bounded retry,
+  and stale automatic device choices can be rediscovered before any text arrives.
+- Verification:
+  - **27 focused Python tests** pass (existing helper + live streaming), Ruff
+    passes. **5 live-draft + 5 replay Node tests** pass; full TSX bundles.
+  - Existing CPU ASR worker, eight threads, real-time-paced 9.109-s fixture:
+    first text **1.406 s**, about one update/sec, capture ended **9.219 s**,
+    final text **9.912 s**. Ten hypotheses; requests **0.399–0.589 s**.
+    Full expected fixture sentence returned; no raw audio file written.
+  - Actual Focusrite two-second PCM capture succeeded after bridge repair.
+    This was quiet input, not an owner-room spoken-accuracy test.
+  - Fresh exclusively task-owned TUI loaded the actual plugin and registered
+    dictate/recovery/replay commands. Host-native textarea assertions passed:
+    live replacement, Unicode prefix, typed suffix/caret, footer lookup and no
+    submit. Used the existing authenticated shared server, not a replacement.
+  - Broader initial 49-test suite had three failure entries and three errors
+    in TTS fixture checks: H/DrvFS test directories do not satisfy Linux uid/
+    chmod safety requirements. Those unrelated tests/security guards were not
+    weakened. Direct Node native probe lacked Bun FFI; the actual OpenCode host
+    subsequently passed native checks. No misleading all-suite pass claim.
+- All output used the existing H root and 100-GB / 15-GiB C/H admission checks.
+  Initial `opencode --help` unexpectedly extracted an 8,524,432-B Bun library
+  beyond its 1-MB estimate; subsequent native stages admitted 100-MB full peaks.
+  After consumers exited, removed **8,673,540 B** of task-owned bundles, probe
+  package, extracted library and Bun transform cache (exact paths in the new
+  receipt). Final combined charge **6,934,885,022 B**; retained H run **24,415 B**.
+  Retained compact results at
+  `receipts/live-dictation-verification.json`, native assertion JSON under
+  `test-output/`, and diagnostic log lines under `state/tui-voice/voice.log`.
+  Existing storage receipts, protected cleanup exceptions and source remain.
+- Updated product contract, README, testing guide and agent architecture map.
+  Prior `/read-last` and storage/memory edits are preserved; branch is still
+  `main`, behind origin by two commits, with uncommitted work. No pull, commit,
+  release, model/provider change or unrelated service restart performed.
+- Remaining owner checks: physical room/microphone accuracy, and live dictation
+  during a real model reply end-to-end. Draft blocking/remount/ownership paths
+  have regression coverage, but no model reply was sent for this test. Use a
+  fresh TUI, press F9, speak several seconds, verify text appears while listening,
+  then pause / F9 to finish and send manually.
+
+## 2026-11-15 — `/read-last` command
+
+- Added `/read-last` and palette action **Voice: Read last reply aloud**.
+  `read_last.ts` refreshes current-session message data, selects the newest
+  completed assistant text (no reasoning/tool output), and checks the route,
+  mute state and speech generation after refresh. No session/empty history/mute
+  produce explanatory feedback; refresh errors are logged and shown.
+- `tui.tsx` reuses local `speakReply` with the selected voice, cancels old speech
+  and resumes from the beginning. Replay queued behind dictation rechecks the
+  session before playback. Mute remains authoritative; replay never changes the
+  saved read-aloud setting. No service/model/provider changes or release bump.
+- Verified five Node regression tests in `tests/read_last.test.ts`: selection
+  and text-part joining; refreshed history; no-session/empty/muted feedback;
+  route/mute/cancel races; refresh failure. Existing esbuild bundled the full
+  TSX plugin successfully. No physical speaker/TUI invocation was tested.
+- Checks used `tools/artifact_env.py --reserve-bytes 1000000`, the existing H
+  root, 100-GB combined guard and 15-GiB C/H reserves. Combined charge after
+  checks: 6,934,905,489 bytes. Only disposable test/plugin bundles were generated;
+  they are removed after checking. Existing storage/memory edits, protected
+  cleanup candidates and runtime/model data remain untouched.
+- User check in a fresh TUI: run `/read-last` after a completed reply; confirm
+  selected-voice audio, then F10 stop/resume. If muted, the command explains
+  how to enable sound. Also available from the palette while a reply is running.
+
+## 2026-11-14 — bounded storage/memory setup (coordinator follow-through)
+
+Owner work is complete for this bounded setup; coordinator verification/closure
+is still pending. No release, GPU, dependency, model, service or runtime work was
+resumed. Existing checkout/HEAD remains `404e7121b1aacfd1502df5dbe0458638ee43046c`.
+
+### Exact paths and configuration
+
+- No previously declared H root was found in project/coordinator records.
+  Declared the expressly authorized
+  `H:\AgentArtifacts\projects\tui-voice\runs\storage-setup-20261114`
+  (`/mnt/h/AgentArtifacts/projects/tui-voice/runs/storage-setup-20261114`).
+- Added executable `tools/artifact_env.py` and `docs/STORAGE.md`; updated
+  `AGENTS.md`, `MEMORY.md`, this handoff and added the source-backed version-1
+  decision `docs/memory/storage-output-routing.md`. Changes remain uncommitted
+  for coordinator review; no branch, tag or released file was replaced.
+- Existing `opencode.json` already includes `/home/brajam/repos/AGENTS.md` and
+  `MEMORY.md`; preserved it and `docs/memory/README.md` byte-for-byte.
+- Before a future tool invocation, use
+  `tools/artifact_env.py --reserve-bytes N -- command ...`. It checks the H
+  mount, aggregates all project runs plus known legacy output, and sets temp,
+  Python bytecode, pytest/coverage, Ruff/uv/pip/npm cache and helper/plugin log
+  destinations under the H root. Compiler/report output flags still need the
+  explicit H destination. It neither installs dependencies nor copies caches.
+- `XDG_RUNTIME_DIR`, AF_UNIX sockets, models/interpreters and existing processes
+  are not changed. No physical quota/sandbox or cross-chat reservation lock is
+  claimed; 50 GB remains an operating ceiling requiring coordinated writers.
+
+### Coordinator source-review corrections (2026-11-14)
+
+- Corrected `tools/artifact_env.py`, `docs/STORAGE.md` and the indexed storage
+  decision; no unrelated source/config changes or inventory rerun.
+- Child-only uppercase `NPM_CONFIG_CACHE` is
+  `H:\AgentArtifacts\projects\tui-voice\runs\storage-setup-20261114\cache\npm`;
+  `NPM_CONFIG_LOGS_DIR` is the same root's `logs\npm`. Conflicting inherited
+  lowercase npm cache/log aliases are removed from the child environment.
+- Build-only child `APPDATA` and `LOCALAPPDATA` use that root's
+  `build-appdata\roaming` and `build-appdata\local`, respectively. Parent/user
+  runtime AppData is not changed. `WSLENV` applies `/p` to these two settings,
+  both npm paths, `TEMP` and `TMP`; unrelated entries are preserved.
+- Before any destination creation or output-producing command, require C free
+  space >= **16,106,127,360 B (15 GiB)** and H free space minus the declared
+  additional peak and **65,536 B** metadata allowance >= **16,106,127,360 B**.
+  These checks are separate from the combined 50-GB project budget.
+- **10 focused checks passed**: valid child environment and actual Windows
+  translation, parent/runtime/model/socket preservation, exact-floor acceptance,
+  and C/H reserve rejection before inventory, destination setup or command
+  execution. Actual free-space check: C **221,216,837,632 B**, H
+  **424,965,324,800 B**, projected H after the 100,000-B check peak plus metadata
+  **424,965,159,264 B**. No builds/downloads/restarts/deletions occurred.
+- Updated the same `receipts/focused-verification.json` and
+  `receipts/storage-report.json` on H. Their known growth is **4,916 B**;
+  accepted H-run bytes plus those edits are **18,984 B**, and accepted combined
+  charge plus receipt growth is **6,934,861,019 B**. These are arithmetic updates
+  of the accepted snapshot below, **not** a refreshed filesystem inventory.
+  Follow-up additional output ceiling: **100,000 B**, inside the original
+  1,000,000-B setup peak ceiling. All failed-cleanup candidates remain untouched.
+
+### Measurements and focused verification
+
+- Snapshot: `2026-11-14T07:00:42Z`, `du -sb` apparent bytes (no link following).
+  All H project runs currently total **14,068 bytes**; the largest observed
+  checkpoint was also **14,068 bytes**. New-output peak ceiling for the entire
+  setup was **1,000,000 bytes**, not an allocation target.
+- Known project-generated output, including legacy paths: **943,275,624 bytes**.
+  Conservatively charging the entire shared `~/.cache/uv` (**5,991,580,479
+  bytes**) gives **6,934,856,103 bytes** current against **50,000,000,000**.
+  Pre-setup charge plus the reserved setup peak: **6,935,842,035 bytes**.
+- Models are not disposable output: the three pinned voice model/bundle files
+  total **467,866,112 bytes** in the existing shared voice directory. Their
+  size/mtime and manifest SHA-256 stayed unchanged; existing voice/service
+  interpreters were not copied, installed into or migrated.
+- Eight focused routing assertions passed: actual Python temp/write locations,
+  H bytecode routing, Windows `TEMP`/`TMP` translation and a cross-OS write/read,
+  non-H refusal and preservation of model/interpreter settings. Ruff passed for
+  the new script; an oversized 50-GB additional reservation was rejected before
+  launching its command. No application/model test suite or full build ran.
+- Baseline/after SHA-256 checks preserved all 20 application/source/config
+  files outside the two intentionally edited instruction/handoff files. No
+  source/lockfile or deliberately versioned asset was deleted. Memory metadata,
+  source links and existing OpenCode instruction entries were checked.
+- Local receipts: `receipts/baseline.json`, `focused-verification.json`,
+  `preservation-and-budget.json`, `storage-report.json` under the H run root.
+  Only this run's completed write/bytecode probes were removed: **245 bytes**;
+  exact paths/sizes are in `focused-verification.json`. No pre-existing data
+  was deleted or moved (**0 bytes**).
+
+### Concrete remaining gaps / retained paths
+
+- Cleanup safety check could not inspect `/proc/469/fd` (`sd-pam`). Preserve the
+  exact failed targets; no retry using another tool/identity. Repo caches:
+  `__pycache__/` **193,761 B**, `tests/__pycache__/` **73,432 B**,
+  `tools/__pycache__/` **7,926 B**, `.ruff_cache/` **1,270 B**.
+  Synthetic fixtures under `C:\Users\james\AppData\Local\Temp`:
+  `sd-04s-speech.wav` **192,044 B**, `sd-1s-speech.wav` **256,044 B**,
+  `sd-gain.wav` **160,044 B**, `sd-gain2.wav` **160,044 B**.
+  Combined retained cleanup candidates: **1,044,565 B**.
+- `C:\Users\james\AppData\Local\tui-voice\gpu-remediation` (**931,844,838 B**)
+  stays intact/uninstalled pending a separate coordinator disposition of the
+  staged installer/recovery record. This setup does not revisit driver work.
+- Existing `~/.local/state/tui-voice` logs/recovery (**48,560 B**) and
+  `/run/user/1000/tui-voice/tts-startup.log` (**276 B**) are counted and retained.
+  Active TUIs/helpers keep their existing output destinations. Speech progress
+  and startup logs tied to Linux sockets need separate runtime work to redirect;
+  no restart or migration was performed here.
+- Existing esbuild cache `~/.npm/_npx/821a89c635d995f5` (**10,323,317 apparent B**)
+  is counted, reused in place and not copied. Shared uv ownership is unresolved;
+  its whole footprint is charged rather than asserting a shared-cache exemption.
+- `/tmp/opencode` contained other projects' `rs-*`/`weapon-cal` work, no retained
+  `tui-voice` output; untouched. No unrelated task/configuration was changed.
+
 ## 2026-11-13 EST — v0.1.1 CPU default moves to FP32
 
 - Branch `codex/cpu-fp32-default`; `package.json` is `0.1.1`.

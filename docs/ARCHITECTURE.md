@@ -47,32 +47,33 @@ ensure a session exists (create + navigate if needed)
 prewarm ASR worker (fire-and-forget)
         │
         ▼
-voice_helper.py record
-  ffmpeg dshow → 16 kHz mono WAV
-  silencedetect stops after N seconds of silence
-  second mic press sends SIGUSR1 → ffmpeg finalizes the WAV
-  max turn is a hard stop
+voice_helper.py dictate
+  ffmpeg dshow → 16 kHz mono PCM pipe (no audio file)
+  stays on through pauses and long turns
+  second mic press sends SIGUSR1 → ffmpeg stops capture
         │
         ▼
-voice_helper.py transcribe
-  split above 28 s and cut at a quiet point, keeping each chunk under 32 s
+live_dictation.py (concurrent with capture)
+  one ASR request in flight, requests capped at eight seconds
   warm AF_UNIX request → Whisper base.en
   cold service fallback if the worker is absent
-  join chunk text in order
+  commit phrases and replace live hypotheses without preview backlog
         │
         ▼
 queueDraft / flushPending
-  if session idle → focus message box, type text
-  if reply running → hold draft, poll until idle, then insert
+  live_draft.ts → footer-anchored native composer updates
+  if composer absent → retain latest text for that session
 ```
 
-- The transcript is never sent. It is typed into the focused prompt using the
-  renderer's stdin path.
-- A second press while listening sends SIGUSR1, finalizes the WAV, and transcribes
-  everything recorded up to that point.
+- The transcript is never sent. Native editor mutations revise only owned text;
+  no synthetic stdin input or global first-editor search is used.
+- A second press while listening sends SIGUSR1 after an explicit readiness
+  handshake and finalizes the last hypothesis. No silence/turn-duration/helper
+  lifetime cutoff is applied. A no-PCM watchdog reports a genuinely stuck device;
+  silent PCM still counts as healthy capture.
 - If a reply starts or is already running, the draft is inserted when the TUI
-  exposes the message box again. Changing sessions discards a pending draft rather
-  than inserting it into the wrong chat.
+  exposes the message box again. Changing sessions retains the pending draft
+  for its originating chat rather than inserting it into another chat.
 
 ## Read-aloud flow
 
@@ -144,13 +145,14 @@ Fields:
 
 | Field | Meaning |
 | --- | --- |
-| `silence` | seconds of silence before finishing |
-| `seconds` | hard maximum turn |
 | `mic` | explicit dshow device, empty = automatic |
-| `threshold` | silence detector noise floor in dB |
+| `threshold` | local recognition noise gate in dB; never auto-stops capture |
 | `gain` | output gain in dB |
 | `readAloud` | speak completed replies |
 | `voice` | Kokoro preset id |
+
+Legacy saved `seconds`/`silence` keys are ignored. Their settings controls are
+removed; dictation is manual on/off.
 
 The dialog is a centered `large` OpenCode dialog using
 `theme.surface("dialog")`, a rounded panel, native selected-row colors, and a

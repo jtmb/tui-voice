@@ -153,10 +153,12 @@ Close the current TUI completely and start a new one from outside the repository
    transcribe the recorded audio into the draft.
 4. Open a chat session. The bottom footer shows one compact rounded panel
    (one footer row) with `▐○🎙 │🔊▌`-style half-cell caps and a divider.
-5. Press `Ctrl+Alt+V`. The status circle turns amber `●`; a helper `record` process
-   starts. The panel does not move or resize.
-6. Wait for silence / the maximum. It changes to `Transcribing`, then a transcript
-   appears in the message box. Nothing is sent.
+5. Press `Ctrl+Alt+V`. A helper `dictate` process starts. The circle turns amber
+   only when microphone PCM arrives. The panel does not move or resize.
+6. Speak for several seconds: text must update during recording, with revisions
+   replacing—not duplicating—the current phrase. Pause and resume speaking: the
+   microphone must remain on. Press F9:
+   the final phrase completes in the same draft. Nothing is sent.
 7. Press `Ctrl+Alt+S`. A centered native-sized settings dialog opens; the footer
    chip hides cleanly behind the modal, and returns when `Esc` closes it. Arrows
    change values.
@@ -168,6 +170,45 @@ Close the current TUI completely and start a new one from outside the repository
 10. Set read-aloud Off in settings, send another prompt, and confirm no `say`
    process starts.
 11. Stop dictation and confirm no `voice_helper.py` process remains.
+
+### Live dictation regressions
+
+Run all development commands through `tools/artifact_env.py` with a fresh peak
+estimate (see `docs/STORAGE.md`). Focused Python tests:
+
+```bash
+tools/artifact_env.py --reserve-bytes 2000000 -- \
+  python3 -B -m unittest discover -s tests -p 'test_live_dictation.py' -v
+```
+
+`tests/live_draft.test.ts` uses Node's built-in test runner after bundling with
+the existing esbuild; output belongs under `$TUI_VOICE_BUILD_DIR`. It checks
+revision replacement, existing drafts and typed suffixes, remounts, manual-edit
+protection, footer lookup and split JSON transport. `tests/native_draft_probe.ts`
+can be bundled as a temporary TUI-only package and loaded in an exclusively
+task-owned TUI using `OPENCODE_CLI_CONFIG_CONTENT`. Set
+`TUI_VOICE_NATIVE_RECEIPT` to an H output file; it checks the real host textarea,
+Unicode offsets, caret preservation and no-submit behavior without a model call.
+
+Manual checks still needed for the owner's room:
+
+- Speak continuously, pause for several seconds, then speak again. The microphone
+  must stay on until explicitly toggled off, including beyond the old 60-s limit.
+- Start with an existing draft; ensure it is kept and live phrases aren't repeated.
+- Edit dictated text mid-turn; it must not be overwritten. `/voice-text` explicitly
+  recovers the complete transcript in the same chat (can duplicate retained text).
+- Dictate during an assistant reply; recognition continues and the held transcript
+  appears when that chat's composer returns. Switching chats must not leak text.
+- A second press during startup must stop gracefully, using the helper's readiness
+  handshake rather than a guessed signal-handler delay.
+
+Measured CPU fixture evidence: 9.109 s of audio paced in real time produced its
+first text at 1.406 s, updated about once/second, and completed at 9.912 s
+(0.693 s after capture ended). Actual Windows Focusrite capture also completed
+over the PCM pipe; it was a quiet-input check, not a physical speech-accuracy test.
+No audio file was written. A stale inherited WSL bridge was reproduced with
+`UtilAcceptVsock ... accept4 failed 110`; child-only reuse of an existing healthy
+bridge restored capture. No WSL/service restart or permission change was used.
 
 ## Verified evidence
 
@@ -186,8 +227,8 @@ Close the current TUI completely and start a new one from outside the repository
   `voice_helper.py say --text "read aloud final check." --voice heart`.
 - Read-aloud mute stopped the helper; unmute started a new helper with
   `--start-chunk` and incremented the warm worker request count.
-- Silence auto-stop stopped a synthetic recording after the speech segment rather
-  than using the full maximum.
+- Historical bounded `record` diagnostic: silence auto-stop stopped a synthetic
+  recording after speech. Interactive `dictate` no longer uses this behavior.
 - Global load verified from `/home/brajam`, not from this repository.
 - Dictation fixtures on 2026-11-12: `short-2s.wav` returned
   `Turn on the living room lights.` (confidence 0.9322); a 37 s synthetic turn

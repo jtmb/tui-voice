@@ -16,6 +16,7 @@ from pathlib import Path
 import re
 import shutil
 import signal
+import stat
 import struct
 import subprocess
 import sys
@@ -25,6 +26,7 @@ import traceback
 import wave
 
 from tts_worker import CPU_PROVIDER, requested_provider, startup_timeout, validate_backend
+from live_dictation import FRAME_BYTES, LiveTranscriber
 
 SERVICE = Path(os.environ.get('TUI_VOICE_SERVICE', str(Path.home() / 'repos/fire-tv-next/lulu-launcher/service')))
 VOICE_DIR = Path(os.environ.get('TUI_VOICE_VOICE_DIR', str(SERVICE.parent / 'voice')))
@@ -63,6 +65,7 @@ _current = None
 _capture_path = None
 _stop_requested = False
 _cold_voice = None
+_windows_environment = None
 
 LOG_DIR = Path(os.environ.get('TUI_VOICE_LOG_DIR') or
                (Path(os.environ.get('XDG_STATE_HOME') or (Path.home() / '.local/state')) / 'tui-voice'))
@@ -121,7 +124,7 @@ def request_stop(_signum=None, _frame=None):
     if _current is not None and _current.poll() is None:
         try:
             if _current.stdin:
-                _current.stdin.write('q')
+                _current.stdin.write('q' if _current.text_mode else b'q')
                 _current.stdin.flush()
         except (OSError, ValueError):
             try:
@@ -135,10 +138,48 @@ signal.signal(signal.SIGINT, stop_child)
 signal.signal(signal.SIGUSR1, request_stop)
 
 
+def windows_env():
+    """Repair a stale inherited WSL interop bridge for our children only.
+
+    A long-lived OpenCode service can retain a dead terminal's bridge. Reuse an
+    existing healthy WSL bridge; never restart WSL, change permissions or daemons.
+    """
+    global _windows_environment
+    if _windows_environment is not None:
+        return _windows_environment
+    inherited = os.environ.get('WSL_INTEROP')
+    candidates = list(dict.fromkeys(filter(None, [
+        inherited, '/run/WSL/1_interop', '/run/WSL/2_interop',
+    ])))
+    for value in candidates:
+        path = Path(value)
+        try:
+            if not stat.S_ISSOCK(path.stat().st_mode):
+                continue
+            pid = path.name.removesuffix('_interop')
+            if pid.isdigit() and not Path('/proc', pid).exists():
+                continue
+            env = {**os.environ, 'WSL_INTEROP': value}
+            probe = subprocess.run([CMD, '/c', 'exit', '0'], env=env, cwd='/mnt/c',
+                                   stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                   stderr=subprocess.PIPE, timeout=1.5)
+            if probe.returncode != 0:
+                continue
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+        _windows_environment = env
+        if value != inherited:
+            log_event('warning', 'recovered stale Windows interop bridge',
+                      previous=inherited, selected=value)
+        return env
+    raise RuntimeError('No healthy Windows interop bridge; microphone/speakers are unavailable')
+
+
 def run(args, timeout=60):
     global _current
     process = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                               text=True, encoding='utf-8', errors='replace')
+                               text=True, encoding='utf-8', errors='replace',
+                               env=windows_env() if str(args[0]).lower().endswith('.exe') else None)
     _current = process
     try:
         stdout, stderr = process.communicate(timeout=timeout)
@@ -187,16 +228,18 @@ def ffmpeg():
 
 
 def devices():
-    code, out, err = run([ffmpeg(), '-hide_banner', '-list_devices', 'true',
-                          '-f', 'dshow', '-i', 'dummy'], timeout=20)
-    text = out + '\n' + err
-    names = []
-    for name in re.findall(r'"([^"]+)"\s+\(audio\)', text):
-        if name not in names:
-            names.append(name)
-    if not names:
-        fail('No Windows microphone was found (ffmpeg/dshow returned no audio devices)')
-    return names
+    for attempt in range(2):
+        try:
+            _, out, err = run([ffmpeg(), '-hide_banner', '-list_devices', 'true',
+                               '-f', 'dshow', '-i', 'dummy'], timeout=6)
+            names = list(dict.fromkeys(re.findall(r'"([^"]+)"\s+\(audio\)', out + '\n' + err)))
+            if names:
+                return names
+        except TimeoutError:
+            pass
+        if not attempt:
+            time.sleep(0.2)
+    fail('Windows microphone discovery failed. Check the input device and WSL Windows interop.')
 
 
 def choose_mic(requested=None):
@@ -275,7 +318,7 @@ def record(seconds, path=None, mic=None, silence=1.5, threshold=-35, gain=0):
 
     process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
                                stderr=subprocess.PIPE, text=True, bufsize=1,
-                               encoding='utf-8', errors='replace')
+                               encoding='utf-8', errors='replace', env=windows_env())
     global _current
     _current = process
     timer = {'handle': None}
@@ -370,6 +413,116 @@ def record(seconds, path=None, mic=None, silence=1.5, threshold=-35, gain=0):
             'device': device, 'devices': names, 'seconds': seconds,
             'silence': silence, 'threshold': threshold, 'gain': gain,
             'rms': round(rms, 1), 'peak': peak, 'bytes': path.stat().st_size}
+
+
+def dictate(mic=None, threshold=-35, gain=0, emit=None):
+    """Stream local hypotheses until explicitly switched off; no silence/time cutoff."""
+    global _current, _stop_requested
+    emit = emit or (lambda value: print(json.dumps(value, ensure_ascii=False), flush=True))
+    emit({'event': 'starting'})  # SIGUSR1 is safe only after this handshake.
+    if _stop_requested:
+        _stop_requested = False
+        return {'ok': True, 'text': ''}
+    # A known device needs no repeated Windows enumeration on every turn.
+    device = mic or choose_mic()[0]
+    if _stop_requested:
+        _stop_requested = False
+        return {'ok': True, 'text': ''}
+    command = [ffmpeg(), '-hide_banner', '-loglevel', 'error',
+               '-f', 'dshow', '-rtbufsize', '64M', '-audio_buffer_size', '50',
+               '-i', 'audio=' + device,
+               '-ac', '1', '-ar', '16000']
+    if gain:
+        command += ['-af', f'volume={gain}dB']
+    command += ['-f', 's16le', 'pipe:1']
+    process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                               stderr=subprocess.PIPE, env=windows_env())
+    _current = process
+    tail = bytearray()
+
+    def errors():
+        for block in iter(lambda: process.stderr.read(1024), b''):
+            tail.extend(block)
+            del tail[:-4000]
+
+    reader = threading.Thread(target=errors, daemon=True)
+    reader.start()
+
+    def decode(pcm):
+        encoded = _encode_wav(pcm, 1, 2, 16000)
+        result = warm_transcribe(encoded)
+        if result is None:
+            result = cold_voice().transcribe(encoded)
+        return result.get('text', '') if result else ''
+
+    live = LiveTranscriber(decode, emit, threshold=threshold)
+    live.start()
+    received = 0
+    stopped = False
+    started = time.monotonic()
+    last_pcm = [started]
+    watchdog_done = threading.Event()
+
+    def stop_capture():
+        nonlocal stopped
+        if stopped:
+            return
+        stopped = True
+        try:
+            process.stdin.write(b'q')
+            process.stdin.flush()
+        except (OSError, ValueError):
+            process.terminate()
+
+    def watch_capture():
+        # This is a device-failure watchdog, not a recording limit: silent PCM
+        # counts as healthy input and keeps the microphone on indefinitely.
+        while not watchdog_done.wait(1):
+            if time.monotonic() - last_pcm[0] > 10:
+                if process.poll() is None:
+                    process.kill()
+                return
+
+    watchdog = threading.Thread(target=watch_capture, daemon=True)
+    watchdog.start()
+    try:
+        while True:
+            block = process.stdout.read(FRAME_BYTES // 10)
+            if not block:
+                break
+            if len(block) % 2:
+                raise ValueError('Microphone returned a truncated PCM sample')
+            if not received:
+                emit({'event': 'listening', 'device': device})
+            received += len(block)
+            last_pcm[0] = time.monotonic()
+            live.feed(block)
+            if live.error:
+                raise live.error
+            if _stop_requested:
+                stop_capture()
+        process.wait(timeout=5)
+        watchdog_done.set()
+        reader.join(timeout=1)
+        if not received or (process.returncode and not stopped):
+            raise RuntimeError('Microphone capture failed: ' +
+                               (tail.decode('utf-8', errors='replace').strip() or 'no audio received'))
+        emit({'event': 'transcribing'})
+        text = live.finish()
+        log_event('info', 'live dictation', device=device, bytes=received,
+                  seconds=round(received / FRAME_BYTES, 2),
+                  elapsed=round(time.monotonic() - started, 2), characters=len(text))
+        return {'ok': True, 'text': text, 'device': device, 'raw_audio_retained': False}
+    finally:
+        watchdog_done.set()
+        live.cancel()
+        if process.poll() is None:
+            process.kill()
+            process.wait(timeout=5)
+        for pipe in (process.stdin, process.stdout, process.stderr):
+            pipe.close()
+        _current = None
+        _stop_requested = False
 
 
 def voice():
@@ -859,6 +1012,11 @@ def main():
     capture.add_argument('--threshold', type=float, default=-35)
     capture.add_argument('--gain', type=float, default=0)
 
+    live = sub.add_parser('dictate', help='stream local dictation as JSON lines')
+    live.add_argument('--mic')
+    live.add_argument('--threshold', type=float, default=-35)
+    live.add_argument('--gain', type=float, default=0)
+
     transcribe_parser = sub.add_parser('transcribe')
     transcribe_parser.add_argument('--wav', required=True)
 
@@ -906,6 +1064,8 @@ def main():
         output(record(args.seconds, args.out, args.mic, args.silence, args.threshold, args.gain))
     elif args.command == 'transcribe':
         output(transcribe(args.wav))
+    elif args.command == 'dictate':
+        output(dictate(args.mic, args.threshold, args.gain))
     elif args.command == 'play':
         output(play(args.wav))
     elif args.command == 'say':

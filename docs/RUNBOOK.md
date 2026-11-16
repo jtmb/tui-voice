@@ -45,8 +45,7 @@ From a session:
 
 Open **Voice: Settings** and choose **Reset to defaults**:
 
-- 1.5 s pause
-- 60 s maximum
+- manual on/off recording (no pause or duration cutoff)
 - automatic microphone
 - −35 dB threshold
 - 0 dB gain

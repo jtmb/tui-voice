@@ -13,6 +13,7 @@ In particular:
 - The voice button stays in the **bottom footer**. Do not move it to the composer,
   a dialog, or a floating overlay.
 - Dictation **types into the message box** and never sends automatically.
+- Dictation is manual on/off: pauses and long turns must not auto-stop it.
 - Recording works while a reply is running; transcribe immediately and queue the
   draft until the message box returns.
 - Read-aloud is a setting with an on/off switch and a local voice choice. A
@@ -55,6 +56,8 @@ Windows ffmpeg available.
 
 ```
 tui.tsx                 OpenCode TUI plugin: footer button, settings dialog, queues
+live_draft.ts           Footer-anchored native composer updates and draft ownership
+live_dictation.py       Single-flight bounded streaming ASR and live hypotheses
 voice_helper.py         Windows mic capture, VAD, Whisper transcription, Kokoro TTS
 tts_worker.py           Persistent local Kokoro worker (AF_UNIX, no cloud)
 README.md               User-facing overview and install
@@ -64,6 +67,13 @@ docs/                   Architecture, settings, testing, troubleshooting, runboo
 ```
 
 ## Common commands
+
+For development checks/builds, first use the executable per-process setup in
+[`docs/STORAGE.md`](docs/STORAGE.md):
+`tools/artifact_env.py --reserve-bytes N -- command ...`. It routes supported
+generated output to the authorized H root without changing the existing voice
+runtime or starting services. See `MEMORY.md`; do not relocate AF_UNIX sockets
+or treat this setup as a physical disk quota.
 
 ```bash
 cd ~/repos/tui-voice
@@ -88,9 +98,13 @@ plugin requires closing and reopening the TUI; `/reload` alone is not sufficient
 ## Architecture
 
 - `tui.tsx` registers the plugin, footer button, settings command, and assistant
-  text-ended subscription. It calls `voice_helper.py` for capture and transcription.
-- `voice_helper.py` records Windows `dshow` audio with ffmpeg, stops after silence,
-  runs local Whisper, and can synthesize/play Kokoro speech.
+  text-ended subscription. Its `dictate` helper streams JSON-line hypotheses
+  into the native composer, anchored to the current session's footer.
+- `live_dictation.py` keeps one ASR request in flight, coalesces previews and
+  commits bounded phrases while capture continues. `live_draft.ts` revises only
+  owned dictated text; edited text is preserved, with `/voice-text` recovery.
+- `voice_helper.py dictate` streams Windows `dshow` audio until explicitly toggled
+  off. Its separate `record` diagnostic remains bounded. Both use local audio.
 - `tts_worker.py` keeps one Kokoro ONNX session loaded and serves chunks over
   `$XDG_RUNTIME_DIR/tui-voice/tts.sock`. The existing ASR warm worker serves
   Whisper over `$XDG_RUNTIME_DIR/firewatch-asr/asr.sock`.
@@ -133,7 +147,7 @@ plugin requires closing and reopening the TUI; `/reload` alone is not sufficient
 - Mouse-click activation of the footer button is not separately automated; the
   keyboard shortcuts are the guaranteed path.
 - Physical microphone clarity and room noise are owner-dependent; use **Input
-  gain**, **Silence threshold**, and **Test microphone**.
+  gain**, **Speech threshold**, and **Test microphone**.
 - Read-aloud and dictation can overlap if the user starts speaking during playback;
   headphones are recommended.
 - The settings dialog is custom JSX; host dialog sizing/theming can change between

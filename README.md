@@ -1,6 +1,19 @@
-# tui-voice
+<p align="center">
+  <img src="docs/media/tui-voice-logo.png" width="168" alt="TUI Voice logo: a cyan terminal prompt and waveform with an amber cursor">
+</p>
 
-Local voice dictation and read-aloud for the **OpenCode TUI**.
+<h1 align="center">tui-voice</h1>
+
+<p align="center">
+  <strong>Speak your prompts. Hear your replies.</strong><br>
+  Local voice dictation and read-aloud for the OpenCode TUI.
+</p>
+
+<p align="center">
+  <a href="docs/SETTINGS.md">Settings</a> ·
+  <a href="docs/TROUBLESHOOTING.md">Troubleshooting</a> ·
+  <a href="docs/AMD_GPU.md">AMD GPU setup</a>
+</p>
 
 Speak into the Windows microphone; the plugin transcribes with local Whisper and
 types the text into the OpenCode message box. It never sends the prompt. Completed
@@ -11,14 +24,15 @@ No cloud service, no TV, no Control Center login.
 ## Features
 
 - **Dictation into the draft** — one turn, local Whisper, text in the message box. Works from the home screen and `/new`; the first press opens a session.
-- **Silence auto-stop** — normal turns end after a pause; a 60 s hard maximum only stops a turn that never pauses.
+- **Manual on/off** — press the microphone/F9 to start, then again to stop.
+  Pauses and long turns do not switch it off.
 - **Works during a reply** — transcribes immediately and queues the draft until
   the message box returns.
 - **Read-aloud** — speaks completed assistant replies through Windows speakers.
 - **Reply sound** — the speaker segment of the same footer panel stops current playback and toggles
   reply read-aloud without opening settings. Unmuting resumes the interrupted reply
   from the current local speech chunk.
-- **Settings dialog** — tune timing, microphone, gain, silence threshold, voice;
+- **Settings dialog** — tune microphone, gain, speech threshold, voice;
   test the mic without recording a prompt.
 - **Global** — loaded once from `~/.config/opencode/cli.json`, across all projects.
 
@@ -58,17 +72,30 @@ Open a chat session and use the bottom footer button or a shortcut:
 | Dictate | `Ctrl+Alt+V` |
 | Dictate | `F9` |
 | Dictate | `/dictate` |
+| Recover dictation after editing | `/voice-text` inserts the last transcript for this chat |
 | Reply sound | `🔊` / `🔇` speaker segment in the footer panel |
 | Reply sound | `Ctrl+Alt+M` or `F10` |
+| Replay last reply | `/read-last` or command palette → **Voice: Read last reply aloud** |
 | Settings | `Ctrl+Alt+S` |
 | Settings | Command palette → **Voice: Settings** |
 
-Speak normally. The button shows `Listening`, then `Transcribing`; the transcript
-appears in the message box. Edit it and send it yourself.
+Speak normally. Once the microphone is actually receiving audio, the button shows
+`Listening` and words appear in the message box as you speak. The newest phrase
+may correct itself as Whisper hears more context. Press F9 or the mic again to
+finish; review the draft and send it yourself. Nothing is sent automatically.
 
 If a reply is still running, the transcript is held and inserted when the message
 box returns. A second press while listening stops the recording at that point and
-transcribes everything captured so far.
+finishes everything captured so far. When the message box is unavailable, live
+recognition continues locally and the latest transcript is held for that chat.
+Manual edits to the dictated region pause live replacement rather than overwrite
+your work; `/voice-text` can insert the full retained transcript afterward.
+Recognition and this recovery buffer stay local and in memory.
+
+Missed a reply? Use `/read-last` to replay the newest completed assistant message
+in this chat from the beginning, replacing any current/queued speech. It uses
+your selected local voice and skips unfinished replies, reasoning and tool output.
+Reply sound must be on (`F10` toggles it); replay does not change that setting.
 
 ## Settings
 
@@ -77,10 +104,8 @@ theme. Keyboard: `↑↓` select, `←→` change, `Enter` choose, `Esc` close.
 
 | Setting | Default | What it does |
 | --- | --- | --- |
-| Finish after a pause | 1.5 s | Silence before the turn ends |
-| Maximum turn | 60 s | Hard stop only if silence is never detected |
 | Input | Automatic | Windows microphone; automatic prefers the real input |
-| Silence threshold | −35 dB | Higher values (−25) treat more room noise as silence |
+| Speech threshold | −35 dB | Recognition gate for quiet audio; does not stop recording |
 | Input gain | Off | Boost a quiet mic; try 6–12 dB |
 | Test microphone | — | Records 2 s and reports RMS/peak |
 | Read replies aloud | On | Local Kokoro read-back; also toggled by the footer speaker icon |
@@ -90,13 +115,11 @@ theme. Keyboard: `↑↓` select, `←→` change, `Enter` choose, `Esc` close.
 
 ### If words are missing
 
-1. Increase **Finish after a pause** to 0.6–0.8 s. This is the usual fix for
-   clipped sentence endings.
-2. Run **Test microphone**. `quiet`/`silent` means gain or device selection is the
+1. Run **Test microphone**. `quiet`/`silent` means gain or device selection is the
    problem.
-3. Raise **Input gain** for a quiet input.
-4. Adjust **Silence threshold** if room noise prevents auto-stop.
-5. Keep **Maximum turn** long; normal turns end on a pause. It is only a safety stop.
+2. Raise **Input gain** for a quiet input.
+3. Lower **Speech threshold** for quieter speech, or raise it to ignore room noise.
+4. Stop with F9/the mic when finished. Pauses do not end recording.
 
 The virtual Steam Streaming Microphone is silent on this machine. Automatic
 selection prefers the Focusrite Analogue input; choose **Input** explicitly if you
@@ -108,16 +131,16 @@ speak into something else.
 footer button / shortcut (home or `/new` opens a session)
         │
         ▼
-voice_helper.py record
-  ffmpeg dshow → 16 kHz WAV → silence stop
+voice_helper.py dictate
+  ffmpeg dshow → 16 kHz PCM pipe
         │
         ▼
-voice_helper.py transcribe
-  long turns split under 28 s, then warm Whisper worker
-  text joined in order (cold service fallback)
+bounded local Whisper requests while recording
+  one in flight; replaceable live phrase
+  warm worker (cold service fallback)
         │
         ▼
-message box draft (never auto-sent)
+native message draft updates (never auto-sent)
 ```
 
 Read-aloud listens to completed assistant text in the current session and runs
@@ -125,6 +148,13 @@ Read-aloud listens to completed assistant text in the current session and runs
 keeps the ONNX voice loaded between chunks and replies. CPU uses the pinned FP32
 `kokoro-v1.0.onnx` by default; INT8 remains available with
 `TUI_VOICE_TTS_MODEL=kokoro-v1.0.int8.onnx`.
+
+Dictation streams 16-kHz microphone PCM directly from Windows ffmpeg to one local
+ASR consumer—no recording WAV or separate post-recording helper. Previews update
+roughly once per second; natural phrase boundaries and an eight-second request
+cap keep work bounded. Slow inference skips obsolete previews instead of queuing
+them. On the existing CPU fixture, first text appeared at 1.4 s; room/mic latency
+and recognition quality still depend on signal level and CPU load.
 
 The plugin depends on the existing local voice stack:
 
@@ -169,8 +199,9 @@ backend. Whisper dictation continues using its current CPU worker.
 
 ## Privacy
 
-- Audio is written to the Windows temp directory only for ffmpeg, then deleted
-  immediately after transcription.
+- Dictation streams microphone PCM in memory; no recording file is created.
+  The separate microphone-test/`record` diagnostic writes a temporary WAV that is
+  deleted immediately after use.
 - The transcript goes only into the local OpenCode message box.
 - Read-aloud uses the local Kokoro model and Windows speakers.
 - No cloud STT/TTS, no TV/ADB, no automatic send, no upload.
@@ -192,13 +223,13 @@ backend. Whisper dictation continues using its current CPU worker.
   keyboard paths are verified. Mouse delivery depends on terminal/tmux mouse mode.
 - **Footer never changes to Listening** — the plugin is not loaded in that TUI.
 - **No transcript** — run **Test microphone**, check the selected input, then raise
-  gain or pause duration. Dictation works from home and `/new`; if it still
+   gain or lower the speech threshold. Dictation works from home and `/new`; if it still
   refuses, restart the TUI to load the current plugin.
 - **Something failed** — failures are appended to
   `~/.local/state/tui-voice/voice.log` with the recording path and traceback.
   Include the last entries in a bug report. No audio or cloud data is logged.
-- **Always waits to the maximum** — room noise is above the silence threshold;
-  raise the threshold toward −25 dB.
+- **Microphone stays on during pauses** — intentional. Press F9/the mic again
+  to switch it off; there is no automatic silence or turn-duration cutoff.
 - **Read-aloud is silent** — check for `🔇` in the footer, enable it in
   settings, select a voice, and check the Windows default output device. Unmuting
   resumes an interrupted reply rather than dropping it.
