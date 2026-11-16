@@ -28,6 +28,14 @@
   edits and protected cleanup targets preserved.
 - Next owner check in a fresh TUI: F9 on → speak → pause → keep speaking →
   F9 off. Words must keep updating and nothing is sent automatically.
+- Released **v0.2.0** at `a7c97be` (merge of `origin/main` logo/README work).
+  Published https://github.com/jtmb/tui-voice/releases/tag/v0.2.0 with notes and
+  compare link to `v0.1.1`. `package.json` bumped 0.1.1 → 0.2.0. Verification on
+  the tagged commit: 28 focused Python tests, 5 `live_draft` + 5 `read_last`
+  Node tests, Ruff, and full TSX bundle all passed. Remote tag peels to
+  `a7c97be`; `main` is clean and matches `origin/main`. Release notes file
+  `receipts/release-v0.2.0-notes.md` is retained under the H run root; test
+  bundles were removed after use.
 
 ## 2026-11-16 — live dictation and intermittent pickup repair
 
