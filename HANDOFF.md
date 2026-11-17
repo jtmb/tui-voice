@@ -1,5 +1,15 @@
 # tui-voice handoff
 
+## 2026-11-17 — v0.3.0 released
+
+- Published https://github.com/jtmb/tui-voice/releases/tag/v0.3.0 at
+  `c0540e3` (`package.json` bumped 0.2.0 → 0.3.0 in that commit). Annotated tag
+  `v0.3.0` peels to `c0540e3` locally and on origin; the release was created as a
+  draft, verified, then published; no assets.
+- Gates on that exact commit: 167 Python tests and 15 Node tests pass.
+- Notes: the six workstreams below plus the verification and the untested list
+  (native Linux hardware audio, WinGet, aarch64, RHEL family).
+
 ## 2026-11-17 — typing during dictation no longer stops it; plugin is standalone
 
 Owner report after the restart: if you type while speaking and then keep
