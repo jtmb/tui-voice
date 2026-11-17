@@ -73,8 +73,8 @@ WSL2. Fixing them and running the matrix surfaced three more defects.
   `fedora:latest`, `archlinux:latest`, `opensuse/tumbleweed:latest`, ~1.33 GB).
   `alpine:3.20` and other projects' images were already present and left alone.
 
-### Proposed memory update (needs review, not applied)
-Add to `docs/memory/portable-stack.md`: (1) managed vs user-owned stacks and the
+### Memory update (applied 2026-11-17 via repo_memory.py, reviewed)
+Added to `docs/memory/portable-stack.md`: (1) managed vs user-owned stacks and the
 JSON marker contract (written only after pip succeeds, must match pinned
 requirements); (2) containers on a WSL2 kernel are native Linux; (3) every
 transitive dependency of the speech stack must be pinned. Evidence: the section

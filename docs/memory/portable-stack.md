@@ -1,5 +1,5 @@
 ---
-{"version":1,"owner":"opencode-memory","scope":"repo","repository":"/home/brajam/repos/tui-voice","id":"portable-stack","title":"Speech stack configuration","tags":["configuration","portability","audio","debian"],"kind":"decision","updated":"2026-11-16","verified":"2026-11-16","sources":["voice_config.py","INSTALL.md","docs/ARCHITECTURE.md"]}
+{"version":1,"owner":"opencode-memory","scope":"repo","repository":"/home/brajam/repos/tui-voice","id":"portable-stack","title":"Speech stack configuration","tags":["configuration","portability","audio","debian","installer","multi-os"],"kind":"decision","updated":"2026-11-17","verified":"2026-11-17","sources":["voice_config.py","setup_stack.py","platform_deps.py","audio_backend.py","tests/test_stack_ownership.py","INSTALL.md","docs/ARCHITECTURE.md","HANDOFF.md"]}
 ---
 
 # Speech stack configuration
@@ -52,11 +52,39 @@ repositories or anything outside the allow-list to this path.
 
 `setup_stack.py` provisions the stack itself: pinned Kokoro FP32 + voices and
 Whisper base.en (SHA-256 in `stack/*.json`), the adapters in `stack/`, and three
-venvs with pinned packages. It is idempotent and keeps a user-provided stack
-intact. The pinned `kokoro-onnx` needs CPython 3.10–3.13; the installer selects a
-compatible interpreter and can fall back to `uv venv --seed` (fetching 3.12) or
-the distro `python3-venv` package.
+venvs with pinned packages. It is idempotent. Never publish models or a stack
+into the repository; the manifests and adapter sources are the deliverable.
+`doctor` exposes the state as its `speech` block (`ready`, `supported`, `fix`,
+`download_bytes`).
 
-`doctor` exposes the same state as its `speech` block. Never publish models or a
-stack into the repository; the manifests and adapter sources are the deliverable,
-the binaries are downloaded on the user's machine.
+Rules that came from real failures (HANDOFF 2026-11-17):
+
+- **Managed vs user-owned.** Under `~/.local/share/tui-voice` (or `--root`) the
+  plugin owns the stack. Elsewhere the stack is the user's: never delete or
+  pip-install into it without `--force --force-user-stack`, and `chmod` only
+  folders the plugin created. Paths come from the two configured folders; do not
+  assume `service/` and `voice/` are siblings.
+- **Marker contract.** `.tui-voice-ready` is JSON `{requirements, python,
+  installed}`, removed before `pip install` and written only after it succeeds.
+  A managed venv is ready only if the marker matches the pinned requirements.
+- **Pin every transitive dependency of the speech stack.** An unpinned `av`
+  drifted and broke all transcription on four of five distros. Pins live in
+  `WHISPER`/`VENVS` in `setup_stack.py`.
+- **Python 3.10-3.13 only** (kokoro-onnx wheels). With no compatible interpreter
+  the installer downloads a SHA-256-pinned standalone `uv` that fetches 3.12.
+  musl (Alpine), glibc < 2.28 and non x86_64/aarch64 are refused with a reason;
+  Alpine is audio-only.
+- **A container on a WSL2 kernel is native Linux.** `/proc/version` says
+  "microsoft" there but there is no Windows interop; `/.dockerenv` or
+  `/run/.containerenv` decides.
+- One installer at a time (`stack.lock`, second run reports `busy`); output goes
+  to `setup.log`, events to `voice.log`.
+
+## Verification
+
+A change is not multi-OS verified by WSL2 alone. The repeatable check is
+Docker `--rm` runs on debian:12, ubuntu:24.04, fedora, archlinux,
+opensuse/tumbleweed and alpine, mounting the repo read-only and `--models-from`
+the existing models: `doctor --install`, `setup_stack.py --install --selftest`,
+a second run that changes nothing, then a fixture transcribe. Containers have no
+audio devices, so capture and playback stay a WSL2/hardware check.
