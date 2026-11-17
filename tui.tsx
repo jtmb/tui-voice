@@ -72,7 +72,7 @@ class VoiceCancelled extends Error {
 const [active, setActive] = createSignal(false)
 const [phase, setPhase] = createSignal<Phase>("idle")
 const [settingsOpen, setSettingsOpen] = createSignal(false)
-let settings: Settings = { mic: "", voice: "heart", threshold: -35, gain: 0, readAloud: true }
+let settings: Settings = { mic: "", voice: "heart", threshold: -35, gain: 6, readAloud: true }
 let updateSettings: ((mutation: (draft: Settings) => void) => Promise<void>) | undefined
 type DictationTurn = {
   id: number
@@ -679,7 +679,7 @@ function VoiceSettings(props: {onClose: () => void}) {
     await updateSettings(draft => {
       draft.mic = ""
       draft.threshold = -35
-      draft.gain = 0
+      draft.gain = 6
       draft.readAloud = true
       draft.voice = "heart"
     })
@@ -746,7 +746,7 @@ function VoiceSettings(props: {onClose: () => void}) {
       {kind: "section", title: "BEHAVIOR"},
       {
         kind: "item", id: "reset", label: "Reset to defaults",
-        description: "Manual on/off recording, -35 dB speech threshold, no gain, automatic microphone.",
+        description: "Manual on/off recording, -35 dB speech threshold, +6 dB gain, automatic microphone.",
         value: () => "Restore",
         activate: resetDefaults,
       },
@@ -949,7 +949,7 @@ export default Plugin.define({
   id: "tui.voice",
   async setup(context) {
     const [stored, update] = context.storage.store<Settings>("tui-voice", {
-      initial: {mic: "", voice: "heart", threshold: -35, gain: 0, readAloud: true},
+      initial: {mic: "", voice: "heart", threshold: -35, gain: 6, readAloud: true},
     })
     settings = stored as Settings
     updateSettings = update

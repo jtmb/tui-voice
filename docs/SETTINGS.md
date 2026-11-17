@@ -10,14 +10,14 @@ native-sized (`large`), themed by the active OpenCode theme, and closes with
 | --- | --- | --- | --- |
 | Input | Automatic | Local capture inputs | Explicit microphone |
 | Speech threshold | −35 dB | −25, −30, −35, −40, −45 | Recognition noise gate; never stops recording |
-| Input gain | Off | 0, 3, 6, 9, 12, 15, 18 dB | Boost a quiet input |
+| Input gain | +6 dB | 0, 3, 6, 9, 12, 15, 18 dB | Boost a quiet input |
 | Test microphone | — | action | Records 2 s and shows RMS/peak |
 | Read replies aloud | On | On/Off | Local Kokoro read-back; footer speaker Replies control toggles this too |
 | Read-aloud voice | Heart | Heart, Velvet, English Rose, Dora | Kokoro preset for read-back |
 | Test read-aloud | — | action | Plays a sample; mute/unmute resumes it |
 | Reset to defaults | — | action | Restores the defaults below |
 
-Defaults: manual on/off recording, automatic mic, **−35 dB**, **0 dB**, read-aloud
+Defaults: manual on/off recording, automatic mic, **−35 dB**, **+6 dB**, read-aloud
 **On**, **Heart**.
 
 ## Tuning missing words
@@ -28,8 +28,8 @@ their controls have been removed.
 
 1. Run **Test microphone**. `silent`/`quiet` means gain or device selection is the
    problem, not transcription.
-2. Raise **Input gain** to 6–12 dB for a quiet Focusrite input. Avoid clipping on
-   loud speech.
+2. The default is now **+6 dB**. Raise **Input gain** to 9–12 dB for a very
+   quiet input. Avoid clipping on loud speech.
 3. Raise **Speech threshold** toward −25 dB to ignore noise, or lower it toward
    −40/−45 dB for quiet speech. This only affects recognition, not recording state.
 
