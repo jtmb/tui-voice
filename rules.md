@@ -84,8 +84,10 @@ requirements remain.
 ## Portability, dependencies and testing
 
 - **Every change is tested for multi-OS compatibility.** The supported matrix is
-  native Linux (Debian/Ubuntu first, plus Fedora/RHEL, Arch, openSUSE, Alpine) and
-  WSL2. A feature is not done because it works on the development host alone;
+  native Linux on glibc (Debian/Ubuntu first, plus Fedora/RHEL, Arch, openSUSE)
+  and WSL2. Alpine is supported for the audio packages only; the speech stack
+  cannot install on musl (no `onnxruntime`/`ctranslate2` wheels) and must refuse
+  with an explanation. A feature is not done because it works on the development host alone;
   record which OS families were exercised and name any that were not.
 - **Every required dependency is verified, not assumed.** From a clean state,
   prove that the audio packages (`ffmpeg`, PulseAudio/PipeWire or ALSA tools), a

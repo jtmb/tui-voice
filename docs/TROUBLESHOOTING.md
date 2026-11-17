@@ -55,8 +55,20 @@ instead. If you point the plugin at a custom stack, set `service` and `voice` in
 `TUI_VOICE_VOICE_DIR`; `python3 voice_config.py --json` shows what was resolved.
 
 The pinned speech packages need Python 3.10–3.13. The installer picks a
-compatible interpreter and, when `uv` is available, can fetch CPython 3.12; on a
-3.14-only host without `uv`, install `python3.12`/`python3-venv` first.
+compatible interpreter, and on a host with only a newer Python it downloads a
+pinned `uv` and lets it fetch CPython 3.12 (needs network).
+
+- **`busy`**: another `setup_stack.py` is running (for example from a second TUI).
+  Wait for it; progress and failures are written to
+  `~/.local/state/tui-voice/setup.log` and `voice.log`.
+- **Install toast says it failed**: read `setup.log`, fix the cause, then run
+  the command the toast prints (an absolute path to `setup_stack.py`).
+- **Alpine or another musl distribution**: speech models cannot be installed
+  (no musl wheels). Use a glibc distribution or your own stack.
+- **A stack I provided is reported not ready**: it is never modified. Its
+  virtualenvs must be CPython 3.10–3.13 with pip; fix them, set
+  `TUI_VOICE_PYTHON` / `TUI_VOICE_ASR_PYTHON` / `TUI_VOICE_TTS_PYTHON`, or pass
+  `--force --force-user-stack` to let tui-voice replace them.
 
 ## Native Linux audio
 

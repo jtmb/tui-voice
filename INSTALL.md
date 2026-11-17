@@ -31,7 +31,7 @@ the plugin is discovered twice and its footer/commands can appear twice.
 | **ffmpeg** | Installed automatically on first run for the detected OS. WSL2 installs the Windows build with WinGet. |
 | **Local audio server** | Linux: PipeWire or PulseAudio. ALSA is the fallback. Nothing is uploaded. |
 | **Python 3.9+** | Runs the helper. The speech stack's own virtualenv is used when one is configured. |
-| **Speech models** | Whisper and Kokoro models plus three virtualenvs, installed automatically on first run (about 600 MB, once). Point the plugin at your own stack instead if you already have one. |
+| **Speech models** | Whisper and Kokoro models plus three virtualenvs, installed automatically on first run (about 500 MB of models plus about 1.2 GB of Python packages, once). Point the plugin at your own stack instead if you already have one. |
 
 No cloud account, API key, or network service is used for speech.
 
@@ -46,7 +46,7 @@ packages it needs, with the distribution's own non-interactive flags:
 | Fedora, RHEL, Rocky, Alma | `dnf` | `ffmpeg`, optional `pulseaudio-utils`, `alsa-utils` |
 | Arch, Manjaro, CachyOS | `pacman` | `ffmpeg`, optional `libpulse`, `alsa-utils` |
 | openSUSE | `zypper` | `ffmpeg`, optional `pulseaudio-utils`, `alsa-utils` |
-| Alpine | `apk` | `ffmpeg`, optional `pulseaudio-utils`, `alsa-utils` |
+| Alpine | `apk` | `ffmpeg`, optional `pulseaudio-utils`, `alsa-utils` (audio only; see the speech note in section 4) |
 | WSL2 | WinGet | `Gyan.FFmpeg` (Windows build) |
 
 The check runs at TUI startup and again on the first capture that finds ffmpeg
@@ -138,10 +138,24 @@ python3 setup_stack.py --install --models-from /path/to/existing/models
 ```
 
 It installs into `~/.local/share/tui-voice/{service,voice}` unless you configured
-another stack. About 600 MB for the models and roughly 1 GB once the virtualenvs
-exist. The pinned packages support **Python 3.10–3.13**; the installer picks a
-compatible interpreter and, when `uv` is available, can fetch CPython 3.12 by
-itself.
+another stack. About 500 MB of models and roughly 1.7 GB on disk once the
+virtualenvs exist. The pinned packages support **Python 3.10–3.13**; the
+installer picks a compatible interpreter. When the host only has a newer Python
+(Fedora 45 ships 3.15, Arch 3.14) it downloads a pinned, SHA-256-verified
+standalone `uv` into `~/.local/share/tui-voice/tools/` and lets it fetch
+CPython 3.12.
+
+**Supported for the speech stack:** glibc 2.28+ on x86_64 or aarch64 (Debian,
+Ubuntu, Fedora/RHEL, Arch, openSUSE) and WSL2. **Alpine (musl) is not
+supported** for speech because `onnxruntime` and `ctranslate2` publish no musl
+wheels; `setup_stack.py` stops with an explanation, and you can still point the
+plugin at your own stack.
+
+Only one installer runs at a time (a second one reports `busy`). Its output goes
+to `~/.local/state/tui-voice/setup.log`. A stack under the plugin data directory
+is plugin-managed and verified against its pinned requirements; a stack you
+provide elsewhere is never deleted or pip-installed into unless you pass
+`--force --force-user-stack`.
 
 Disable automatic provisioning with `TUI_VOICE_AUTO_INSTALL=0`.
 

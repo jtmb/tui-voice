@@ -1,5 +1,85 @@
 # tui-voice handoff
 
+## 2026-11-17 — review fixes and the first real multi-OS run
+
+A code review of `018992e..HEAD` found the installers had only ever been run on
+WSL2. Fixing them and running the matrix surfaced three more defects.
+
+### Fixed (file)
+- `doctor` crashed with `NameError` on every native Linux host (`platform_deps.py`);
+  `venv` is now probed with the interpreter that will build it, and Debian asks for
+  `pythonX.Y-venv`; the apt refresh retry also works on WSL2.
+- A failed/interrupted `pip install` no longer looks ready: the marker is JSON,
+  removed before pip and written after it; managed venvs must match the pinned
+  requirements (`setup_stack.py`).
+- Stack folders can be named and placed anywhere; explicit `TUI_VOICE_*_PYTHON`
+  replace the matching venv; `web_voice` gets `TUI_VOICE_VOICE_DIR` from the helper.
+- User-provided stacks are never deleted or pip-installed into (needs
+  `--force --force-user-stack`); `chmod 700` only on folders the plugin creates;
+  permission errors become `SetupError`.
+- One installer at a time (`stack.lock`, second run reports `busy`); install
+  events go to `voice.log`; the TUI sends installer output to `setup.log` and
+  toasts success or failure with an absolute fix command.
+- `--selftest` failure no longer crashes text mode; `--models-from` verifies the
+  hash before copying, tries every candidate, falls back to download;
+  truncated downloads become `SetupError`.
+- Alpine/musl, glibc < 2.28 and non-x86_64/aarch64 are refused with a reason
+  (`platform_check`, `status().supported`); `doctor` reports `fix` and
+  `download_bytes`; sizes in docs/toast now say ~500 MB models + packages.
+
+### Found by the Docker matrix (not by review)
+- A container on a WSL2 kernel was detected as WSL2 and tried WinGet
+  (`audio_backend.detect_platform`); containers now count as native Linux.
+- Fedora 45 (Python 3.15) and Arch (3.14) failed to build venvs without `uv`;
+  `setup_stack.py` now downloads a pinned, SHA-256-verified standalone uv.
+- Unpinned `av` drifted and broke every transcription on Ubuntu/Fedora/Arch/
+  openSUSE (`open() got an unexpected keyword argument 'metadata_errors'`);
+  `av`, `ctranslate2` and `tokenizers` are now pinned.
+
+### Evidence (all containers `--rm`, repo mounted read-only, models via `--models-from`)
+| OS | Python | doctor --install (root) | setup_stack --install | 2nd run | Transcribe fixture |
+| --- | --- | --- | --- | --- | --- |
+| Debian 12 | 3.11 | ffmpeg installed | ready | all `kept` | exact text |
+| Ubuntu 24.04 | 3.12 | ffmpeg installed | ready | all `kept` | exact text |
+| Fedora 45 | 3.15 → uv 3.12 | ffmpeg installed | ready | all `kept` | exact text |
+| Arch | 3.14 → uv 3.12 | ffmpeg installed | ready | all `kept` | exact text |
+| openSUSE Tumbleweed | 3.13 | ffmpeg installed | ready | all `kept` | exact text |
+| Alpine 3.20 | 3.12 | ffmpeg installed | refused (musl), clear message | n/a | n/a |
+
+- Real download (no `--models-from`) on Debian 12: ready, `--verify` hashes ok,
+  `--selftest` passed (2 m 36 s including apt and pip).
+- Non-root without sudo (Debian 12): `manual: true` with the exact
+  `sudo apt-get install … ffmpeg` command.
+- This host (WSL2): `doctor` leaves the Lulu stack byte-for-byte untouched;
+  fresh root install, 2nd run all `kept`; two concurrent installs → one `busy`;
+  a pip failure (dead index) leaves the stack not ready and a logged error, and a
+  rerun recovers.
+- Fresh TUI: owner stack → no toast; empty stack with auto-install off → warning
+  with an absolute command; empty stack with auto-install on → "Installing local
+  speech models (one time, about 502 MB…)" then "Local speech is ready", with
+  `setup.log` and `voice.log` populated.
+- 167 tests pass (`py_compile` clean).
+
+### Not tested
+- Microphone capture and playback inside containers (no devices): capture/playback
+  were verified earlier on WSL2 only. WinGet install path, macOS, aarch64 hosts,
+  Debian/Ubuntu `pythonX.Y-venv` install with a real non-default interpreter,
+  RHEL/Rocky/Alma, Mint/Raspbian (mapped by `ID_LIKE`, not run).
+- The TUI install toast was observed in a real TUI; mouse activation unchanged.
+
+### Cleanup
+- Removed: two 1.67 GB temp stacks on this host and the probe stack (1.69 GB),
+  and the five images this run pulled (`debian:12`, `ubuntu:24.04`,
+  `fedora:latest`, `archlinux:latest`, `opensuse/tumbleweed:latest`, ~1.33 GB).
+  `alpine:3.20` and other projects' images were already present and left alone.
+
+### Proposed memory update (needs review, not applied)
+Add to `docs/memory/portable-stack.md`: (1) managed vs user-owned stacks and the
+JSON marker contract (written only after pip succeeds, must match pinned
+requirements); (2) containers on a WSL2 kernel are native Linux; (3) every
+transitive dependency of the speech stack must be pinned. Evidence: the section
+above.
+
 ## 2026-11-17 — owner rules: multi-OS testing and deterministic dependencies
 
 - `rules.md` now requires every change to be tested for multi-OS compatibility

@@ -178,14 +178,26 @@ after a successful install.
 Kokoro and Whisper files into `voice/models/`, verifies every SHA-256, creates
 `service/.venv`, `voice/.venv` and `voice/.asr-venv`, and writes the adapter
 modules from `stack/` (`web_voice.py`, `asr-worker.py`, `voices.py`,
-`neural-models.json`, `asr-models.json`). Existing files and virtualenvs in a
-user-provided stack are left untouched unless `--force` is passed.
+`neural-models.json`, `asr-models.json`). Paths come from the two configured
+folders, whatever they are called; nothing assumes `service/` and `voice/` are
+siblings.
 
-The pinned packages support CPython 3.10–3.13, so the installer selects a
-compatible interpreter; `uv venv --seed` is the fallback that can fetch CPython
-3.12 when the host only has 3.14. The TUI runs `setup_stack.py --install` in the
-background when `doctor` reports the stack missing and `TUI_VOICE_AUTO_INSTALL`
-is enabled.
+**Managed vs user-owned.** A stack is plugin-managed when it lives under the
+plugin data directory (or `--root` is given). Managed virtualenvs are ready only
+when their `.tui-voice-ready` JSON marker lists exactly the pinned requirements;
+the marker is deleted before `pip install` and written only after it succeeds, so
+an interrupted install cannot look ready. A user-owned stack is never deleted or
+pip-installed into without `--force --force-user-stack`, and explicit
+`TUI_VOICE_*_PYTHON` interpreters replace the matching virtualenv entirely.
+
+The pinned packages support CPython 3.10–3.13 (including the audio decoder
+stack: `av`, `ctranslate2`, `tokenizers`). The installer selects a compatible
+interpreter; with none available it downloads a SHA-256-pinned standalone `uv`
+and lets it fetch CPython 3.12. Hosts without glibc 2.28+ wheels (musl/Alpine)
+are refused with an explanation. A per-user lock allows one installer at a time;
+progress goes to `setup.log` and events to `voice.log`. The TUI runs
+`setup_stack.py --install` in the background when `doctor` reports the stack
+missing and `TUI_VOICE_AUTO_INSTALL` is enabled, then toasts the result.
 
 ## Configuration
 
