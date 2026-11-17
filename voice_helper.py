@@ -1,20 +1,19 @@
 #!/usr/bin/env python3
 """Local dictation helper for the tui-voice OpenCode plugin.
 
-Records through the Windows microphone with ffmpeg, stops on silence, and
-returns text from the existing local Whisper stack. No cloud service or TV.
+Records through the local microphone (Windows on WSL2; PipeWire, PulseAudio or
+ALSA on native Linux) with ffmpeg, stops on silence, and returns text from the
+existing local Whisper stack. No cloud service or TV.
 """
 import argparse
 import base64
 from contextlib import contextmanager
 import fcntl
-import glob
 import io
 import json
 import os
 from pathlib import Path
 import re
-import shutil
 import signal
 import stat
 import struct
@@ -25,16 +24,19 @@ import time
 import traceback
 import wave
 
+import audio_backend
+import voice_config
 from tts_worker import CPU_PROVIDER, requested_provider, startup_timeout, validate_backend
 from live_dictation import FRAME_BYTES, LiveTranscriber
 
-SERVICE = Path(os.environ.get('TUI_VOICE_SERVICE', str(Path.home() / 'repos/fire-tv-next/lulu-launcher/service')))
-VOICE_DIR = Path(os.environ.get('TUI_VOICE_VOICE_DIR', str(SERVICE.parent / 'voice')))
+# No repository or home-directory default: see voice_config for the lookup order.
+SERVICE = voice_config.service()
+VOICE_DIR = voice_config.voice()
 HERE = Path(__file__).resolve().parent
 ASR_WORKER = VOICE_DIR / 'asr-worker.py'
 TTS_WORKER = HERE / 'tts_worker.py'
-ASR_PYTHON = Path(os.environ.get('TUI_VOICE_ASR_PYTHON', str(VOICE_DIR / '.asr-venv/bin/python')))
-TTS_PYTHON = Path(os.environ.get('TUI_VOICE_TTS_PYTHON', str(VOICE_DIR / '.venv/bin/python')))
+ASR_PYTHON = Path(voice_config.asr_python())
+TTS_PYTHON = Path(voice_config.tts_python())
 
 
 def _bounded_env_int(name, default, maximum):
@@ -59,8 +61,8 @@ WARM_IDLE = _env_seconds('TUI_VOICE_WARM_IDLE', 1800)
 # override otherwise makes every start die with a bare argparse status 2.
 ASR_THREADS = _bounded_env_int('TUI_VOICE_ASR_THREADS', 8, 8)
 TTS_THREADS = _bounded_env_int('TUI_VOICE_TTS_THREADS', 8, 24)
-POWERSHELL = '/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe'
-CMD = '/mnt/c/Windows/System32/cmd.exe'
+CMD = audio_backend.windows_cmd()
+WINDOWS_CWD = str(Path(CMD).parent) if Path(CMD).is_absolute() else '/'
 _current = None
 _capture_path = None
 _stop_requested = False
@@ -160,7 +162,7 @@ def windows_env():
             if pid.isdigit() and not Path('/proc', pid).exists():
                 continue
             env = {**os.environ, 'WSL_INTEROP': value}
-            probe = subprocess.run([CMD, '/c', 'exit', '0'], env=env, cwd='/mnt/c',
+            probe = subprocess.run([CMD, '/c', 'exit', '0'], env=env, cwd=WINDOWS_CWD,
                                    stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                                    stderr=subprocess.PIPE, timeout=1.5)
             if probe.returncode != 0:
@@ -192,6 +194,11 @@ def run(args, timeout=60):
     return process.returncode, stdout, stderr
 
 
+def audio_env():
+    """Child environment for audio tools: the Windows bridge on WSL only."""
+    return windows_env() if audio_backend.PLATFORM == audio_backend.WSL2 else None
+
+
 def windows_temp():
     code, out, _ = run([CMD, '/c', 'echo', '%TEMP%'], timeout=10)
     value = out.strip()
@@ -201,74 +208,39 @@ def windows_temp():
     return Path('/mnt/' + match.group(1).lower() + '/' + match.group(2).replace('\\', '/'))
 
 
+def scratch_dir():
+    """Private directory for temporary WAVs on this platform."""
+    if audio_backend.PLATFORM == audio_backend.WSL2:
+        return windows_temp()
+    return audio_backend.scratch_dir()
+
+
 def to_windows(path):
-    code, out, err = run(['wslpath', '-w', str(path)], timeout=10)
-    if code != 0 or not out.strip():
-        fail('Could not translate the audio path for Windows: ' + err.strip())
-    return out.strip()
+    try:
+        return audio_backend.output_path(path, child_env=audio_env())
+    except audio_backend.AudioBackendError as error:
+        fail(str(error))
 
 
 def ffmpeg():
-    configured = os.environ.get('TUI_VOICE_FFMPEG')
-    if configured and Path(configured).is_file():
-        return configured
-    patterns = [
-        '/mnt/c/Users/*/AppData/Local/Microsoft/WinGet/Packages/Gyan.FFmpeg_*/ffmpeg-*/bin/ffmpeg.exe',
-        '/mnt/c/Program Files/**/ffmpeg.exe',
-        '/mnt/c/ffmpeg/bin/ffmpeg.exe',
-    ]
-    for pattern in patterns:
-        matches = sorted(glob.glob(pattern, recursive=True))
-        if matches:
-            return matches[0]
-    found = shutil.which('ffmpeg.exe') or shutil.which('ffmpeg')
-    if found:
-        return found
-    fail('Windows ffmpeg was not found; set TUI_VOICE_FFMPEG')
+    try:
+        return audio_backend.ffmpeg()
+    except audio_backend.AudioBackendError as error:
+        fail(str(error))
 
 
 def devices():
-    for attempt in range(2):
-        try:
-            _, out, err = run([ffmpeg(), '-hide_banner', '-list_devices', 'true',
-                               '-f', 'dshow', '-i', 'dummy'], timeout=6)
-            names = list(dict.fromkeys(re.findall(r'"([^"]+)"\s+\(audio\)', out + '\n' + err)))
-            if names:
-                return names
-        except TimeoutError:
-            pass
-        if not attempt:
-            time.sleep(0.2)
-    fail('Windows microphone discovery failed. Check the input device and WSL Windows interop.')
+    try:
+        return audio_backend.devices(child_env=audio_env())
+    except audio_backend.AudioBackendError as error:
+        fail(str(error))
 
 
 def choose_mic(requested=None):
-    names = devices()
-    if requested:
-        if requested not in names:
-            fail('That microphone is not available: ' + requested)
-        return requested, names
-    preferred = os.environ.get('TUI_VOICE_MIC')
-    if preferred and preferred in names:
-        return preferred, names
-
-    def score(name):
-        lower = name.lower()
-        value = 0
-        if 'stereo mix' in lower or 'wave out' in lower or 'what u hear' in lower:
-            value -= 20
-        if 'focusrite' in lower:
-            value += 6
-        if 'analogue 1 + 2' in lower:
-            value += 5
-        if 'microphone' in lower:
-            value += 3
-        if 'steam streaming' in lower:
-            value -= 2
-        return value
-
-    selected = max(names, key=score)
-    return selected, names
+    try:
+        return audio_backend.choose_mic(requested, child_env=audio_env())
+    except audio_backend.AudioBackendError as error:
+        fail(str(error))
 
 
 def capture_filters(silence, threshold, gain):
@@ -300,25 +272,25 @@ def record(seconds, path=None, mic=None, silence=1.5, threshold=-35, gain=0):
     device, names = choose_mic(mic)
     seconds = max(1, min(120, int(seconds)))
     if not path:
-        path = windows_temp() / ('tui-voice-' + str(os.getpid()) + '.wav')
+        path = scratch_dir() / ('tui-voice-' + str(os.getpid()) + '.wav')
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     global _current, _capture_path, _stop_requested
     _capture_path = str(path)
-    windows_path = to_windows(path)
+    output_file = audio_backend.output_path(path, child_env=audio_env())
     command = [
-        ffmpeg(), '-hide_banner', '-loglevel', 'info' if silence > 0 else 'error', '-f', 'dshow',
-        '-rtbufsize', '64M', '-i', 'audio=' + device,
+        ffmpeg(), '-hide_banner', '-loglevel', 'info' if silence > 0 else 'error',
+        *audio_backend.capture_args(device),
         '-t', str(seconds), '-ac', '1', '-ar', '16000', '-sample_fmt', 's16',
     ]
     filters = capture_filters(silence, threshold, gain)
     if filters:
         command += ['-af', ','.join(filters)]
-    command += ['-y', windows_path]
+    command += ['-y', output_file]
 
     process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
                                stderr=subprocess.PIPE, text=True, bufsize=1,
-                               encoding='utf-8', errors='replace', env=windows_env())
+                               encoding='utf-8', errors='replace', env=audio_env())
     global _current
     _current = process
     timer = {'handle': None}
@@ -409,10 +381,12 @@ def record(seconds, path=None, mic=None, silence=1.5, threshold=-35, gain=0):
     log_event('info', 'recorded', path=str(path), device=device, seconds=seconds,
               bytes=path.stat().st_size, rms=round(rms, 1))
     _capture_path = None
-    return {'ok': True, 'path': str(path), 'windows_path': windows_path,
-            'device': device, 'devices': names, 'seconds': seconds,
-            'silence': silence, 'threshold': threshold, 'gain': gain,
-            'rms': round(rms, 1), 'peak': peak, 'bytes': path.stat().st_size}
+    result = {'ok': True, 'path': str(path), 'device': device, 'devices': names,
+              'seconds': seconds, 'silence': silence, 'threshold': threshold, 'gain': gain,
+              'rms': round(rms, 1), 'peak': peak, 'bytes': path.stat().st_size}
+    if audio_backend.PLATFORM == audio_backend.WSL2:
+        result['windows_path'] = output_file
+    return result
 
 
 def dictate(mic=None, threshold=-35, gain=0, emit=None):
@@ -423,20 +397,19 @@ def dictate(mic=None, threshold=-35, gain=0, emit=None):
     if _stop_requested:
         _stop_requested = False
         return {'ok': True, 'text': ''}
-    # A known device needs no repeated Windows enumeration on every turn.
+    # A known device needs no repeated device enumeration on every turn.
     device = mic or choose_mic()[0]
     if _stop_requested:
         _stop_requested = False
         return {'ok': True, 'text': ''}
-    command = [ffmpeg(), '-hide_banner', '-loglevel', 'error',
-               '-f', 'dshow', '-rtbufsize', '64M', '-audio_buffer_size', '50',
-               '-i', 'audio=' + device,
-               '-ac', '1', '-ar', '16000']
+    command = ([ffmpeg(), '-hide_banner', '-loglevel', 'error']
+               + audio_backend.capture_args(device, streaming=True)
+               + ['-ac', '1', '-ar', '16000'])
     if gain:
         command += ['-af', f'volume={gain}dB']
     command += ['-f', 's16le', 'pipe:1']
     process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                               stderr=subprocess.PIPE, env=windows_env())
+                               stderr=subprocess.PIPE, env=audio_env())
     _current = process
     tail = bytearray()
 
@@ -504,6 +477,9 @@ def dictate(mic=None, threshold=-35, gain=0, emit=None):
         process.wait(timeout=5)
         watchdog_done.set()
         reader.join(timeout=1)
+        # Capture is over: a later stop signal must not touch its pipes while
+        # local ASR is still running on the audio already received.
+        _current = None
         if not received or (process.returncode and not stopped):
             raise RuntimeError('Microphone capture failed: ' +
                                (tail.decode('utf-8', errors='replace').strip() or 'no audio received'))
@@ -520,12 +496,24 @@ def dictate(mic=None, threshold=-35, gain=0, emit=None):
             process.kill()
             process.wait(timeout=5)
         for pipe in (process.stdin, process.stdout, process.stderr):
-            pipe.close()
+            try:
+                pipe.close()
+            except (OSError, ValueError, RuntimeError):
+                # A late stop signal can close the pipe first; cleanup must not
+                # replace the real capture or ASR failure with a pipe error.
+                pass
         _current = None
         _stop_requested = False
 
 
 def voice():
+    module = SERVICE / 'web_voice.py'
+    if not module.is_file():
+        problem = voice_config.problem()
+        detail = f' ({problem})' if problem else ''
+        fail(f'No local speech stack at {SERVICE}{detail}. Point '
+             f'"service" in {voice_config.config_path()} or TUI_VOICE_SERVICE at the '
+             'directory that provides web_voice.py.')
     sys.path.insert(0, str(SERVICE))
     from web_voice import WebVoice
     return WebVoice()
@@ -670,10 +658,14 @@ def start_worker(kind, idle_seconds=None):
         script = ASR_WORKER if kind == 'asr' else TTS_WORKER
         if not python.is_file():
             log_event('error', f'missing {kind} worker Python', path=str(python))
-            return {'ok': False, 'error': f'Missing {kind} worker Python: {python}'}
+            return {'ok': False, 'error': f'Missing {kind} worker Python: {python}. '
+                                          f'Set it in {voice_config.config_path()} or the '
+                                          f'TUI_VOICE_{kind.upper()}_PYTHON variable.'}
         if not script.is_file():
             log_event('error', f'missing {kind} worker script', path=str(script))
-            return {'ok': False, 'error': f'Missing {kind} worker script: {script}'}
+            return {'ok': False, 'error': f'Missing {kind} worker script: {script}. '
+                                          f'Point "voice" in {voice_config.config_path()} or '
+                                          'TUI_VOICE_VOICE_DIR at your speech stack.'}
         idle = WARM_IDLE if idle_seconds is None else max(0, int(idle_seconds))
         threads = ASR_THREADS if kind == 'asr' else TTS_THREADS
         threads = max(1, min(threads, 8 if kind == 'asr' else 24))
@@ -792,7 +784,7 @@ def transcribe(path):
     path = Path(path)
     if not path.is_file() or path.stat().st_size <= 44:
         fail('The recording is missing or empty', path=str(path))
-    temporary = path.parent == windows_temp()
+    temporary = path.parent == scratch_dir()
     started = time.monotonic()
     try:
         try:
@@ -852,15 +844,22 @@ def transcribe(path):
 
 
 def play(path):
-    windows_path = to_windows(path)
-    escaped = windows_path.replace("'", "''")
-    code, out, err = run([
-        POWERSHELL, '-NoProfile', '-NonInteractive', '-Command',
-        "(New-Object Media.SoundPlayer '" + escaped + "').PlaySync()",
-    ], timeout=60)
+    windows_path = to_windows(path) if audio_backend.PLATFORM == audio_backend.WSL2 else None
+    try:
+        command = audio_backend.playback_command(path, windows_path=windows_path)
+    except audio_backend.AudioBackendError as error:
+        fail(str(error))
+    label = 'Windows' if audio_backend.PLATFORM == audio_backend.WSL2 else 'Local'
+    try:
+        code, out, err = run(command, timeout=60)
+    except OSError as error:
+        fail(label + ' playback failed: ' + str(error))
     if code != 0:
-        fail('Windows playback failed: ' + (err.strip() or out.strip()))
-    return {'ok': True, 'path': str(path), 'windows_path': windows_path}
+        fail(label + ' playback failed: ' + (err.strip() or out.strip()))
+    result = {'ok': True, 'path': str(path)}
+    if windows_path:
+        result['windows_path'] = windows_path
+    return result
 
 
 def chunks(text, limit=420):
@@ -910,7 +909,7 @@ def say(text, voice_id='heart', should_play=True, start_chunk=0, progress_file=N
     start_chunk = max(0, int(start_chunk or 0))
     if start_chunk >= len(parts):
         fail('No speech remains after the last played chunk')
-    directory = windows_temp()
+    directory = scratch_dir()
     engine_lock = threading.Lock()
 
     def synthesize(chunk):

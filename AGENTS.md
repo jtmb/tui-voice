@@ -28,29 +28,31 @@ In particular:
 ## Scope
 
 `tui-voice` is a standalone **OpenCode TUI plugin** for local voice dictation and
-read-aloud. It is not part of the Fire TV app source. It depends on the existing
-local Whisper/Kokoro service in `~/repos/fire-tv-next/lulu-launcher/service`, but
-all product/UI names here are `tui-voice` / `tui.voice`.
+read-aloud. It is not part of the Fire TV app source. It drives a local
+Whisper/Kokoro stack that the user configures; no repository is assumed and all
+product/UI names here are `tui-voice` / `tui.voice`.
 
 ## Environment
 
 | Item | Value |
 | --- | --- |
-| Repository | `~/repos/tui-voice` |
-| Plugin loader | `~/.config/opencode/cli.json` → `/home/brajam/repos/tui-voice` |
+| Repository | this checkout (`~/repos/tui-voice` here) |
+| Plugin loader | `~/.config/opencode/cli.json` → this checkout |
 | Entrypoint | `./tui` → `tui.tsx` |
 | Helper | `voice_helper.py` |
-| Whisper service | `~/repos/fire-tv-next/lulu-launcher/service` (override `TUI_VOICE_SERVICE`) |
-| Python | `.../service/.venv/bin/python` (override `TUI_VOICE_PYTHON`) |
-| Warm ASR Python | `.../voice/.asr-venv/bin/python` (override `TUI_VOICE_ASR_PYTHON`) |
-| Warm TTS Python | `.../voice/.venv/bin/python` (override `TUI_VOICE_TTS_PYTHON`) |
-| Windows ffmpeg | WinGet Gyan.FFmpeg, auto-discovered (override `TUI_VOICE_FFMPEG`) |
+| Configuration | env vars, then `~/.config/tui-voice/config.json`, then `~/.local/share/tui-voice` (`voice_config.py`) |
+| Speech service | `service` setting: directory providing `web_voice.py` and `.venv` |
+| Voice directory | `voice` setting: models, `asr-worker.py`, `.asr-venv`, `.venv` |
+| Python | `TUI_VOICE_PYTHON`, then `service/.venv/bin/python`, then `python3` |
+| Warm ASR / TTS Python | `voice/.asr-venv/bin/python` and `voice/.venv/bin/python` |
+| ffmpeg | WSL2: WinGet/`where.exe` discovery. Linux: system `ffmpeg` (override `TUI_VOICE_FFMPEG`) |
+| Playback tool | Linux: `pw-play`/`paplay`/`aplay`/`ffplay` auto-detected (override `TUI_VOICE_PLAYER`) |
 | Microphone | Automatic; override `TUI_VOICE_MIC` |
 | Error log | `~/.local/state/tui-voice/voice.log` (override `TUI_VOICE_LOG_DIR`) |
-| Platform | WSL2 + Windows microphone/speakers |
+| Platform | WSL2 (Windows microphone/speakers) or native Linux (PipeWire/PulseAudio, ALSA fallback) |
 
-Services do not auto-start. The plugin needs the voice service's Python/models and
-Windows ffmpeg available.
+Services do not auto-start. The plugin needs the configured stack's
+interpreters/models and a local `ffmpeg`.
 
 ## Repository map
 
@@ -58,7 +60,9 @@ Windows ffmpeg available.
 tui.tsx                 OpenCode TUI plugin: footer button, settings dialog, queues
 live_draft.ts           Footer-anchored native composer updates and draft ownership
 live_dictation.py       Single-flight bounded streaming ASR and live hypotheses
-voice_helper.py         Windows mic capture, VAD, Whisper transcription, Kokoro TTS
+voice_helper.py         Local mic capture, VAD, Whisper transcription, Kokoro TTS
+audio_backend.py        Platform audio: ffmpeg, devices, capture argv, playback
+voice_config.py         Portable settings: stack dirs, interpreters, audio overrides
 tts_worker.py           Persistent local Kokoro worker (AF_UNIX, no cloud)
 README.md               Product page for users (not documentation)
 INSTALL.md              Install guide: global vs project-local plugin scope
@@ -81,17 +85,20 @@ or treat this setup as a physical disk quota.
 cd ~/repos/tui-voice
 
 # Syntax/helper check
-python3 -m py_compile voice_helper.py tts_worker.py
+python3 -m py_compile voice_config.py audio_backend.py voice_helper.py tts_worker.py
 
 # Plugin discovery
 opencode plugin list
 
-# Local voice helper checks
-~/repos/fire-tv-next/lulu-launcher/service/.venv/bin/python voice_helper.py devices
-~/repos/fire-tv-next/lulu-launcher/service/.venv/bin/python voice_helper.py \
-  transcribe --wav ~/repos/fire-tv-next/lulu-launcher/voice/fixtures/short-2s.wav
-~/repos/fire-tv-next/lulu-launcher/service/.venv/bin/python voice_helper.py warm --status
-~/repos/fire-tv-next/lulu-launcher/service/.venv/bin/python voice_helper.py warm --start
+# What the plugin resolved (config file, stack dirs, interpreters)
+python3 voice_config.py --json
+
+# Local voice helper checks (the helper runs in the stack interpreter)
+python3 voice_helper.py devices
+$(python3 voice_config.py --python) voice_helper.py \
+  transcribe --wav /path/to/16k-mono.wav
+python3 voice_helper.py warm --status
+python3 voice_helper.py warm --start
 ```
 
 A fresh TUI loads the plugin globally. A path change or a newly added TUI-only
@@ -105,8 +112,9 @@ plugin requires closing and reopening the TUI; `/reload` alone is not sufficient
 - `live_dictation.py` keeps one ASR request in flight, coalesces previews and
   commits bounded phrases while capture continues. `live_draft.ts` revises only
   owned dictated text; edited text is preserved, with `/voice-text` recovery.
-- `voice_helper.py dictate` streams Windows `dshow` audio until explicitly toggled
-  off. Its separate `record` diagnostic remains bounded. Both use local audio.
+- `voice_helper.py dictate` streams platform capture audio (WSL2 `dshow`, Linux
+  `pulse`/`alsa`) until explicitly toggled off. Its separate `record` diagnostic
+  remains bounded. Both use local audio.
 - `tts_worker.py` keeps one Kokoro ONNX session loaded and serves chunks over
   `$XDG_RUNTIME_DIR/tui-voice/tts.sock`. The existing ASR warm worker serves
   Whisper over `$XDG_RUNTIME_DIR/firewatch-asr/asr.sock`.
@@ -123,7 +131,7 @@ plugin requires closing and reopening the TUI; `/reload` alone is not sufficient
 
 ## Verification checklist
 
-- `opencode plugin list` includes `/home/brajam/repos/tui-voice`.
+- `opencode plugin list` includes this checkout.
 - Fresh TUI from outside this repo shows the compact rounded footer panel: status circle, `🎙`, divider, and speaker
   in the same one-row footer bar; widths do not shift between states.
 - `Ctrl+Alt+V` changes its status circle from `○` to amber `●` (`Listening`).
@@ -140,8 +148,9 @@ plugin requires closing and reopening the TUI; `/reload` alone is not sufficient
   changing its provider, model, or interpreter. Record hardware results honestly;
   source-level checks cannot establish RX 7900 XT acceleration or speed.
 - Read-aloud On speaks a completed assistant reply; Off stays silent.
-- `voice_helper.py devices` lists the real Windows input (Focusrite before the
-  virtual Steam microphone).
+- `voice_helper.py devices` lists real inputs with the automatic selection first:
+  on WSL2 the Focusrite before the virtual Steam microphone; on Linux a hardware
+  source before monitors, StreamMix, and other virtual sources.
 - No audio file remains after transcription; no cloud request is made.
 
 ## Open work and limits

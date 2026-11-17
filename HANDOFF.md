@@ -1,5 +1,51 @@
 # tui-voice handoff
 
+## 2026-11-16 — PR #3 review: portable stack, Debian audio
+
+- Reviewed `shakiata`'s PR #3 (`feat/native-linux-audio`, +6671/−135). The
+  platform split in `audio_backend.py` is sound and the WSL2 capture path is
+  preserved, but it was not portable: `voice_helper.py`, `tts_worker.py` and
+  `tui.tsx` still defaulted to `~/repos/fire-tv-next/lulu-launcher/...`, the WSL
+  helpers assumed drive `C:` in fixed `/mnt/c/...` strings, and the PR carried a
+  5,525-line session transcript (83% of the diff) into a public repository.
+- Added `voice_config.py` as the single resolver: environment variable, then
+  `~/.config/tui-voice/config.json`, then the plugin-owned
+  `~/.local/share/tui-voice/{service,voice}`. No repository is named in a
+  default. `voice_helper.py`, `tts_worker.py` and `tui.tsx` all use it, so the
+  TUI, helper and workers cannot disagree about the interpreter.
+- Removed every literal `/mnt/c` path from runtime code. WSL now resolves
+  `cmd.exe`, `powershell.exe`, `%SystemRoot%`, `%LOCALAPPDATA%`, `%ProgramFiles%`
+  and `where.exe` from the live Windows install, with `TUI_VOICE_CMD` /
+  `TUI_VOICE_POWERSHELL` overrides and actionable errors when discovery fails.
+- Debian hardening: PipeWire/PulseAudio is detected from `PULSE_SERVER` or
+  `$XDG_RUNTIME_DIR/pulse/native` instead of requiring `pactl`, so capture
+  (`-f pulse -i default`) and `paplay` work on minimal installs; `ffplay` from
+  the mandatory `ffmpeg` package remains the last player; `TUI_VOICE_CAPTURE`
+  can force `pulse`/`alsa`; `TUI_VOICE_PLAYER` accepts `{file}` anywhere in the
+  command instead of only appending the path.
+- Migration on this machine: wrote `~/.config/tui-voice/config.json` (0600)
+  pointing `service`/`voice` at the existing local stack, so the owner's setup
+  keeps working without any repository path in the plugin. `python3
+  voice_config.py --json` resolves the service venv and both worker venvs;
+  `voice_helper.py devices` still reports the Focusrite first and
+  `warm --status` still answers from the running workers.
+- Removed `docs/handoffs/2026-11-16-native-linux-port/session-export.md`; the
+  handoff README remains and now describes the interpreter resolution it
+  actually has. Updated INSTALL (Debian packages, config file, precedence),
+  ARCHITECTURE (configuration + audio matrix + dependencies), TROUBLESHOOTING
+  (missing stack, no `pactl`), RUNBOOK, TESTING, STORAGE, AMD_GPU, AGENTS,
+  `docs/README.md`, and the two WSL-specific lines in `rules.md` (product
+  behaviour unchanged).
+- Tests: `python3 -m unittest discover -s tests -p 'test_*.py'` → 95 pass
+  (76 before; new config suite plus backend coverage for dynamic Windows
+  discovery, `{file}`, pulse-socket playback and capture override). `py_compile`
+  passes on all helper modules.
+- Not verified here: native Debian capture/playback on real hardware (no Debian
+  host), live transcription against a Debian-installed stack, WSL `record`/`play`
+  after the change (device discovery verified only), and a TypeScript typecheck
+  (no `tsc`/`bun` in the checkout). The PR's own Linux evidence stands.
+- No release was cut.
+
 ## 2026-11-16 — README product GIF
 
 - Owner asked for a visual GIF built with the `game-readme` approach. The

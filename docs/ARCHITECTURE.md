@@ -8,7 +8,8 @@ service of its own.
 | Path | Responsibility |
 | --- | --- |
 | `tui.tsx` | Plugin registration, footer button, settings dialog, dictation state, pending-draft queue, read-aloud subscription |
-| `voice_helper.py` | Windows microphone capture (ffmpeg/dshow), silence detection, RMS report, local Whisper transcription, local Kokoro speech, warm-worker control |
+| `voice_helper.py` | Local microphone capture (ffmpeg), silence detection, RMS report, local Whisper transcription, local Kokoro speech, warm-worker control |
+| `audio_backend.py` | Platform audio differences: ffmpeg discovery, device enumeration/selection, capture arguments, output paths, playback tool, WAV scratch directory |
 | `tts_worker.py` | Persistent local Kokoro worker: loads the pinned ONNX voice once and serves chunks over a private AF_UNIX socket |
 | `package.json` | `./tui` entrypoint |
 | `README.md` | Product page for users |
@@ -49,7 +50,8 @@ prewarm ASR worker (fire-and-forget)
         │
         ▼
 voice_helper.py dictate
-  ffmpeg dshow → 16 kHz mono PCM pipe (no audio file)
+  ffmpeg capture → 16 kHz mono PCM pipe (no audio file)
+  WSL2: DirectShow audio; Linux: pulse source or ALSA device
   stays on through pauses and long turns
   second mic press sends SIGUSR1 → ffmpeg stops capture
         │
@@ -86,7 +88,7 @@ current session check + read-aloud setting
         │
         ▼
 speechQueue → voice_helper.py say
-  warm TTS chunk request → Kokoro WAV → Windows speakers
+  warm TTS chunk request → Kokoro WAV → local speakers
   cold service fallback in CPU mode; explicit GPU mode reports failure
 ```
 
@@ -146,7 +148,7 @@ Fields:
 
 | Field | Meaning |
 | --- | --- |
-| `mic` | explicit dshow device, empty = automatic |
+| `mic` | explicit capture device (description or raw id), empty = automatic |
 | `threshold` | local recognition noise gate in dB; never auto-stops capture |
 | `gain` | output gain in dB |
 | `readAloud` | speak completed replies |
@@ -159,23 +161,66 @@ The dialog is a centered `large` OpenCode dialog using
 `theme.surface("dialog")`, a rounded panel, native selected-row colors, and a
 footer with keyboard hints. It is not a full-screen route.
 
+## Configuration
+
+`voice_config.py` is the single source of truth for stack paths, interpreters and
+audio overrides. Resolution order: environment variable, then
+`~/.config/tui-voice/config.json` (`$TUI_VOICE_CONFIG`), then the plugin-owned
+data directory `~/.local/share/tui-voice/{service,voice}`. No repository is
+named anywhere in the defaults; a missing stack produces an actionable error
+instead of a traceback.
+
+`tui.tsx` calls `voice_config.py --python` so the TUI, helper and workers agree
+on the interpreter. `voice_helper.py` and `tts_worker.py` import the same module.
+
+## Audio backend
+
+`audio_backend.py` owns every platform difference; the rest of the helper only
+knows public device names and a blocking `play`.
+
+| | WSL2 | Native Linux |
+| --- | --- | --- |
+| Platform detection | `WSL_DISTRO_NAME`/`WSL_INTEROP`, or `microsoft` in `/proc/version` | everything else |
+| ffmpeg | `TUI_VOICE_FFMPEG`, `ffmpeg.exe` on `PATH`, `where.exe`, then WinGet/Program Files under the live `%LOCALAPPDATA%`/`%ProgramFiles%` | `TUI_VOICE_FFMPEG`, then `ffmpeg` on `PATH` |
+| Capture input | `-f dshow -i audio=<device>` | `-f pulse -i <source>`, or `-f alsa -i plughw:C,D`; `TUI_VOICE_CAPTURE` forces a backend |
+| Device list | DirectShow audio device names | `pactl -f json list sources`, then `pactl list short sources`, then `arecord -l`, then the server default |
+| Device names | DirectShow names as-is | source descriptions; duplicates carry ` (technical id)`; raw ids also accepted |
+| Output path | `wslpath -w` Windows path | local path unchanged |
+| Playback | PowerShell `Media.SoundPlayer` `PlaySync()`; `powershell.exe` found through `%SystemRoot%` | `TUI_VOICE_PLAYER`, `pw-play`, `paplay`, `aplay`, then `ffplay`; all block until done |
+| WAV scratch | Windows `%TEMP%` | `$XDG_RUNTIME_DIR/tui-voice` (`0700`), or `$TMPDIR/tui-voice-<uid>` |
+
+Automatic microphone selection prefers real hardware inputs: focusrite and
+explicit `mic`/`microphone` names gain weight, while monitor, loopback,
+StreamMix, stereo-mix, wave-out and steam sources are penalised. On native Linux
+the OS default source (`pactl get-default-source`) gains a scoring bonus when it
+is a real input, while a virtual default (monitor, loopback, StreamMix) still
+loses to hardware. Every player and capture process is a child of the helper, so
+stopping read-aloud still works by stopping that helper.
+
+PipeWire/PulseAudio detection does not require `pactl`: a `PULSE_SERVER` or
+`$XDG_RUNTIME_DIR/pulse/native` socket is enough, which keeps minimal Debian
+installs working through `paplay` and `-f pulse`.
+
 ## Dependencies
 
 | Dependency | Default | Override |
 | --- | --- | --- |
-| Local Whisper/Kokoro service | `~/repos/fire-tv-next/lulu-launcher/service` | `TUI_VOICE_SERVICE` |
-| Voice models and worker runtimes | `SERVICE/../voice` | `TUI_VOICE_VOICE_DIR` |
-| Python with the service | service `.venv/bin/python` | `TUI_VOICE_PYTHON` |
-| Warm ASR Python | `VOICE_DIR/.asr-venv/bin/python` | `TUI_VOICE_ASR_PYTHON` |
-| Warm TTS Python | `VOICE_DIR/.venv/bin/python` | `TUI_VOICE_TTS_PYTHON` |
+| Local speech service | `~/.local/share/tui-voice/service` | `TUI_VOICE_SERVICE` or `service` in the config file |
+| Voice models and worker runtimes | `~/.local/share/tui-voice/voice` | `TUI_VOICE_VOICE_DIR` or `voice` |
+| Python with the service | `service/.venv/bin/python` when present, else `python3` | `TUI_VOICE_PYTHON` |
+| Warm ASR Python | `voice/.asr-venv/bin/python` | `TUI_VOICE_ASR_PYTHON` |
+| Warm TTS Python | `voice/.venv/bin/python` | `TUI_VOICE_TTS_PYTHON` |
 | TTS execution provider | `cpu`; opt in with `migraphx` | `TUI_VOICE_TTS_PROVIDER` |
-| TTS model | CPU and MIGraphX: `kokoro-v1.0.onnx` (FP32); INT8 is opt-in | `TUI_VOICE_TTS_MODEL` (absolute or relative to `VOICE_DIR/models`) |
+| TTS model | CPU and MIGraphX: `kokoro-v1.0.onnx` (FP32); INT8 is opt-in | `TUI_VOICE_TTS_MODEL` (absolute or relative to `voice/models`) |
 | Worker idle lifetime | 1800 seconds | `TUI_VOICE_WARM_IDLE` |
 | ASR worker threads | 8 | `TUI_VOICE_ASR_THREADS` |
 | TTS worker threads | 8 | `TUI_VOICE_TTS_THREADS` |
 | ASR socket | `$XDG_RUNTIME_DIR/firewatch-asr/asr.sock` | `TUI_VOICE_ASR_SOCKET` |
 | TTS socket | `$XDG_RUNTIME_DIR/tui-voice/tts.sock` | `TUI_VOICE_TTS_SOCKET` |
-| Windows ffmpeg | WinGet Gyan.FFmpeg auto-discovery | `TUI_VOICE_FFMPEG` |
+| ffmpeg | WSL2: WinGet auto-discovery. Linux: system `ffmpeg` | `TUI_VOICE_FFMPEG` |
+| Playback tool | Linux: auto-detected local player | `TUI_VOICE_PLAYER` |
+| Capture backend | pulse when a server is reachable, else ALSA | `TUI_VOICE_CAPTURE` (`pulse`/`alsa`) |
+| Windows interop tools | Discovered from the live install | `TUI_VOICE_CMD`, `TUI_VOICE_POWERSHELL` |
 | Microphone | automatic real-input selection | `TUI_VOICE_MIC` |
 | Error log directory | `~/.local/state/tui-voice` | `TUI_VOICE_LOG_DIR` |
 

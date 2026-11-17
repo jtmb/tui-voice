@@ -8,7 +8,7 @@ native-sized (`large`), themed by the active OpenCode theme, and closes with
 
 | Row | Default | Choices | Effect |
 | --- | --- | --- | --- |
-| Input | Automatic | Windows dshow inputs | Explicit microphone |
+| Input | Automatic | Local capture inputs | Explicit microphone |
 | Speech threshold | −35 dB | −25, −30, −35, −40, −45 | Recognition noise gate; never stops recording |
 | Input gain | Off | 0, 3, 6, 9, 12, 15, 18 dB | Boost a quiet input |
 | Test microphone | — | action | Records 2 s and shows RMS/peak |
@@ -33,9 +33,10 @@ their controls have been removed.
 3. Raise **Speech threshold** toward −25 dB to ignore noise, or lower it toward
    −40/−45 dB for quiet speech. This only affects recognition, not recording state.
 
-The virtual Steam Streaming Microphone is silent on this machine. Automatic
-selection prefers the Focusrite Analogue input; use **Input** if that is not the
-microphone you speak into.
+The virtual Steam Streaming Microphone is silent on this WSL2 machine. Automatic
+selection prefers a real hardware microphone (the Focusrite Analogue input there,
+a hardware source on native Linux); use **Input** if that is not the microphone you
+speak into.
 
 ## Keyboard
 

@@ -2,7 +2,7 @@
 
 ## Owner-authorized roots
 
-- Source: `/home/brajam/repos/tui-voice`; no extra checkout or dependency copy.
+- Source: this checkout; no extra checkout or dependency copy.
 - All project runs share one 100,000,000,000-byte ceiling, not a fresh allowance
   per run. The executable wrapper measures the entire H project root plus known
   legacy output and conservatively charges the existing shared uv cache.

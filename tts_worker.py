@@ -34,10 +34,9 @@ import time
 import uuid
 import wave
 
-VOICE_DIR = Path(os.environ.get(
-    'TUI_VOICE_VOICE_DIR',
-    str(Path(os.environ.get('TUI_VOICE_SERVICE',
-                           str(Path.home() / 'repos/fire-tv-next/lulu-launcher/service'))).parent / 'voice')))
+import voice_config
+
+VOICE_DIR = voice_config.voice()
 MAX_FRAME = 16 * 1024 * 1024
 MAX_RESPONSE = 16 * 1024 * 1024
 MAX_TEXT = 1200

@@ -29,7 +29,7 @@ requirements remain.
 
 ## Dictation
 
-- A turn records the Windows microphone, transcribes locally, and **types the
+- A turn records the local microphone, transcribes locally, and **types the
   transcript into the OpenCode message box**. It must not cut off while the user is
   still speaking. Dictation is a manual on/off toggle: stay on through pauses
   and long turns until the user presses the microphone/shortcut again.
@@ -55,8 +55,8 @@ requirements remain.
 ## Read-aloud
 
 - Read-aloud is a visible setting with an explicit On/Off switch.
-- It speaks completed assistant replies through the local Kokoro model and Windows
-  speakers. No cloud speech.
+- It speaks completed assistant replies through the local Kokoro model and the
+  local speakers. No cloud speech.
 - The local voice is selectable: Heart, Velvet, English Rose, Dora.
 - The footer speaker icon is the quick control; it must stop the active
   `say` process, not just hide the label.

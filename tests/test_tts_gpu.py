@@ -323,7 +323,7 @@ class TtsGpuTests(unittest.TestCase):
                 cold = Mock()
                 cold.speak.return_value = {'wav': 'YQ==', 'engine': 'cold CPU'}
                 with patch.object(helper, 'start_worker', return_value={'ok': True}), \
-                     patch.object(helper, 'windows_temp', return_value=self.root), \
+                     patch.object(helper, 'scratch_dir', return_value=self.root), \
                      patch.object(helper, 'voice', return_value=cold) as load_cold, \
                      redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
                     if mode == 'migraphx':
@@ -377,7 +377,7 @@ class TtsGpuTests(unittest.TestCase):
         response = {**backend, 'wav': base64.b64encode(audio.getvalue()).decode('ascii')}
         with patch.object(helper, 'start_worker', return_value={'ok': True}), \
              patch.object(helper, 'worker_request', return_value=response), \
-             patch.object(helper, 'windows_temp', return_value=self.root):
+             patch.object(helper, 'scratch_dir', return_value=self.root):
             result = helper.say('Hello.', should_play=False)
         self.assertEqual(result['warm_chunks'], 1)
         self.assertIs(result['gpu_execution_verified'], True)
