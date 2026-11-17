@@ -45,6 +45,13 @@
   after the change (device discovery verified only), and a TypeScript typecheck
   (no `tsc`/`bun` in the checkout). The PR's own Linux evidence stands.
 - No release was cut.
+- Merged as PR #3 (`018992e`) and pulled to local `main`. Post-merge WSL
+  verification: 95 tests pass; `devices` reports the Focusrite first; warm
+  `transcribe` of the existing fixture returns `Turn on the living room lights.`
+  (0.9322) in 0.7 s; warm `say --no-play` returns one chunk; `play` succeeds with
+  a silent player; a 1 s `record` produced 16 kHz mono audio (deleted after the
+  check). The running TUI still holds the pre-merge plugin code until it is fully
+  restarted.
 
 ## 2026-11-16 — README product GIF
 
