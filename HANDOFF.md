@@ -1,5 +1,15 @@
 # tui-voice handoff
 
+## 2026-11-17 — v0.3.1 released, issue #4 closed
+
+- Published https://github.com/jtmb/tui-voice/releases/tag/v0.3.1 at `93559a4`
+  (`package.json` 0.3.1 in that commit); the annotated tag peels to that commit
+  locally and on origin; created as a draft, verified, then published; no assets.
+- Gates on that commit: 175 Python tests, 15 Node tests.
+- Issue #4 was closed as completed with a comment pointing at the release. It
+  asks the reporter to reopen if it still fails on a real Arch machine with audio
+  (only verified here with a stand-in stack in a real TUI).
+
 ## 2026-11-17 — issue #4: stale interpreter on first run (Arch/Omarchy)
 
 Reported by the Omarchy laptop agent after following the Quickstart prompt:
