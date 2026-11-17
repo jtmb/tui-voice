@@ -28,9 +28,9 @@ In particular:
 ## Scope
 
 `tui-voice` is a standalone **OpenCode TUI plugin** for local voice dictation and
-read-aloud. It is not part of the Fire TV app source. It drives a local
-Whisper/Kokoro stack that the user configures; no repository is assumed and all
-product/UI names here are `tui-voice` / `tui.voice`.
+read-aloud. It is self-contained: it provisions and drives a local
+Whisper/Kokoro stack (`setup_stack.py`) that can be pointed elsewhere; no other
+repository is assumed and all product/UI names here are `tui-voice` / `tui.voice`.
 
 ## Environment
 
@@ -123,13 +123,14 @@ plugin requires closing and reopening the TUI; `/reload` alone is not sufficient
   into the native composer, anchored to the current session's footer.
 - `live_dictation.py` keeps one ASR request in flight, coalesces previews and
   commits bounded phrases while capture continues. `live_draft.ts` revises only
-  owned dictated text; edited text is preserved, with `/voice-text` recovery.
+  owned dictated text. Anything the user types or fixes is kept and dictation
+  continues after it (it never freezes); `/voice-text` re-inserts the transcript.
 - `voice_helper.py dictate` streams platform capture audio (WSL2 `dshow`, Linux
   `pulse`/`alsa`) until explicitly toggled off. Its separate `record` diagnostic
   remains bounded. Both use local audio.
 - `tts_worker.py` keeps one Kokoro ONNX session loaded and serves chunks over
-  `$XDG_RUNTIME_DIR/tui-voice/tts.sock`. The existing ASR warm worker serves
-  Whisper over `$XDG_RUNTIME_DIR/firewatch-asr/asr.sock`.
+  `$XDG_RUNTIME_DIR/tui-voice/tts.sock`. The warm ASR worker serves
+  Whisper over `$XDG_RUNTIME_DIR/tui-voice/asr.sock`.
 - The plugin starts both workers in the background at setup and before dictation
   or read-aloud. ASR and default CPU TTS retain the cold service fallback.
   Explicit `TUI_VOICE_TTS_PROVIDER=migraphx` must fail when GPU TTS is unavailable,

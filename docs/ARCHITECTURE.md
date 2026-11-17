@@ -111,7 +111,7 @@ restored before the model is needed.
 
 | Worker | Model | Socket | Idle exit |
 | --- | --- | --- | --- |
-| ASR | Whisper `base.en` int8, 8 CPU threads | `$XDG_RUNTIME_DIR/firewatch-asr/asr.sock` | 30 min |
+| ASR | Whisper `base.en` int8, 8 CPU threads | `$XDG_RUNTIME_DIR/tui-voice/asr.sock` | 30 min |
 | TTS | Kokoro FP32 on CPU; FP32 also used for explicitly selected MIGraphX | `$XDG_RUNTIME_DIR/tui-voice/tts.sock` | 30 min |
 
 - Sockets are AF_UNIX, mode `0600`, inside a uid-owned `0700` directory. Only the
@@ -253,7 +253,7 @@ installs working through `paplay` and `-f pulse`.
 | Worker idle lifetime | 1800 seconds | `TUI_VOICE_WARM_IDLE` |
 | ASR worker threads | 8 | `TUI_VOICE_ASR_THREADS` |
 | TTS worker threads | 8 | `TUI_VOICE_TTS_THREADS` |
-| ASR socket | `$XDG_RUNTIME_DIR/firewatch-asr/asr.sock` | `TUI_VOICE_ASR_SOCKET` |
+| ASR socket | `$XDG_RUNTIME_DIR/tui-voice/asr.sock` | `TUI_VOICE_ASR_SOCKET` |
 | TTS socket | `$XDG_RUNTIME_DIR/tui-voice/tts.sock` | `TUI_VOICE_TTS_SOCKET` |
 | ffmpeg | WSL2: WinGet auto-discovery. Linux: system `ffmpeg` | `TUI_VOICE_FFMPEG` |
 | Playback tool | Linux: auto-detected local player | `TUI_VOICE_PLAYER` |
@@ -262,8 +262,7 @@ installs working through `paplay` and `-f pulse`.
 | Microphone | automatic real-input selection | `TUI_VOICE_MIC` |
 | Error log directory | `~/.local/state/tui-voice` | `TUI_VOICE_LOG_DIR` |
 
-The paths are local. The plugin does not use the Fire TV app, ADB, or the Control
-Center API.
+The paths are local. The plugin uses no cloud service, ADB, or Control Center API.
 
 ## Error log
 

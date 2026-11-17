@@ -1,5 +1,42 @@
 # tui-voice handoff
 
+## 2026-11-17 — typing during dictation no longer stops it; plugin is standalone
+
+Owner report after the restart: if you type while speaking and then keep
+speaking, nothing more is inserted until the mic is toggled off and on, and long
+turns "cut off".
+
+- **Cause (reproduced in a real TUI):** `LiveDraft` set a permanent
+  `edited = true` the first time the box no longer matched what it had inserted
+  (typing before/inside the dictated text, or deleting). After that it wrote
+  nothing, not even the final transcript. A replay of a 37 s monologue through
+  `LiveTranscriber` returned 125 words for the 124 spoken, and the same monologue streamed
+  into the TUI without edits reached the last word, so length alone does not cut
+  off; the freeze is the only mechanism found. If it still happens with no edits,
+  `~/.local/state/tui-voice/voice.log` and `tests/tui_sim/drive.py plain` are the
+  place to start.
+- **Fix (`live_draft.ts`, `tui.tsx`):** the writer never freezes. Typing before the
+  region moves its anchor; typing after it or editing inside it hands the text
+  to the user and dictation continues after it with only the words not yet shown;
+  a sent/cleared draft is not resurrected. The "Draft edited" toast and the
+  `edited` state are gone. `rules.md` now states this.
+- **Evidence:** 10 Node tests (`tests/live_draft.test.ts`, 8 for the new
+  behaviour); real-TUI runs of `tests/tui_sim/drive.py` (fake helper, PTY, `pyte`):
+  before the fix `mid` froze after the edit and never inserted the final text;
+  after it, `plain`, `type`, `mid` and `inside` all end with the last word and keep
+  the typed text. 167 Python tests pass.
+- **Known limit:** words already handed to the user are not revised later, so a
+  Whisper correction to a word that was already shown (and then edited around) is
+  not applied. Phrases are cut at 8 s without a pause, which can garble a word at
+  a boundary in continuous speech (seen in the replay); not changed here.
+- **Standalone:** removed every reference to the previous host project (docs,
+  history, a test guard). The ASR socket default is now
+  `$XDG_RUNTIME_DIR/tui-voice/asr.sock` (was a name from the old stack). A warm
+  worker already running on the old socket idles out; the next start uses the new
+  path. The owner's machine config at `~/.config/tui-voice/config.json` still
+  points at an external stack; switching to the plugin's own stack is a separate,
+  owner-approved step (`python3 setup_stack.py --install`, about 1.7 GB).
+
 ## 2026-11-17 — review fixes and the first real multi-OS run
 
 A code review of `018992e..HEAD` found the installers had only ever been run on
@@ -50,7 +87,7 @@ WSL2. Fixing them and running the matrix surfaced three more defects.
   `--selftest` passed (2 m 36 s including apt and pip).
 - Non-root without sudo (Debian 12): `manual: true` with the exact
   `sudo apt-get install … ffmpeg` command.
-- This host (WSL2): `doctor` leaves the Lulu stack byte-for-byte untouched;
+- This host (WSL2): `doctor` leaves a user-provided stack byte-for-byte untouched;
   fresh root install, 2nd run all `kept`; two concurrent installs → one `busy`;
   a pip failure (dead index) leaves the stack not ready and a logged error, and a
   rerun recovers.
@@ -166,7 +203,7 @@ above.
 - Reviewed `shakiata`'s PR #3 (`feat/native-linux-audio`, +6671/−135). The
   platform split in `audio_backend.py` is sound and the WSL2 capture path is
   preserved, but it was not portable: `voice_helper.py`, `tts_worker.py` and
-  `tui.tsx` still defaulted to `~/repos/fire-tv-next/lulu-launcher/...`, the WSL
+  `tui.tsx` still defaulted to a hard-coded checkout path, the WSL
   helpers assumed drive `C:` in fixed `/mnt/c/...` strings, and the PR carried a
   5,525-line session transcript (83% of the diff) into a public repository.
 - Added `voice_config.py` as the single resolver: environment variable, then
@@ -614,7 +651,7 @@ resumed. Existing checkout/HEAD remains `404e7121b1aacfd1502df5dbe0458638ee43046
   `22.40.00.58`). `/dev/dxg` exists; `/dev/kfd` and `/dev/dri` do not (expected
   for WSL).
 - TTS interpreter:
-  `/home/brajam/repos/fire-tv-next/lulu-launcher/voice/.venv/bin/python`
+  the configured stack's `voice/.venv/bin/python`
   (Python 3.12.13). Installed the ROCm 10.1 pip stack there:
   `onnxruntime==1.29.0`, `onnxruntime-ep-migraphx==1.0.0+rocm10.1.0`,
   `migraphx==2.18.0+rocm10.1.0`, `migraphx-libs==2.18.0+rocm10.1.0`,
@@ -783,8 +820,8 @@ resumed. Existing checkout/HEAD remains `404e7121b1aacfd1502df5dbe0458638ee43046
 
 ## 2026-11-12 UTC — standalone plugin, native settings, footer button
 
-- Owner moved the plugin out of `fire-tv-next` into the standalone repository
-  `~/repos/tui-voice` and asked for global loading. `~/.config/opencode/cli.json`
+- Owner keeps the plugin in the standalone repository `~/repos/tui-voice` and
+  asked for global loading. `~/.config/opencode/cli.json`
   now contains `/home/brajam/repos/tui-voice`; the old plugin directory was
   removed. `opencode plugin list` reports the new path. Load was verified from
   `/home/brajam`, outside the repository.
@@ -840,9 +877,8 @@ resumed. Existing checkout/HEAD remains `404e7121b1aacfd1502df5dbe0458638ee43046
   verification still require the owner's environment.
 - The settings dialog is custom JSX. Host dialog sizing/theming can change between
   OpenCode releases.
-- The plugin depends on the local voice stack at
-  `~/repos/fire-tv-next/lulu-launcher/service`; use `TUI_VOICE_SERVICE` and
-  `TUI_VOICE_PYTHON` to relocate it.
+- The plugin provisions its own speech stack (`setup_stack.py`); use
+  `TUI_VOICE_SERVICE` and `TUI_VOICE_PYTHON` to point it at a different one.
 - Settings values may still reflect manual tuning from acceptance (for example,
   0.5 s / 5 s). **Reset to defaults** restores 1.5 s / 60 s / −35 dB / 0 dB /
   read-aloud On / Heart.

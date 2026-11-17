@@ -33,7 +33,7 @@ ENGINE = 'Whisper base.en / faster-whisper / CPU int8 (local)'
 
 def default_socket_path():
     runtime = os.environ.get('XDG_RUNTIME_DIR') or str(Path.home() / '.cache')
-    return Path(runtime) / 'firewatch-asr/asr.sock'
+    return Path(runtime) / 'tui-voice/asr.sock'
 
 
 def _recv_exact(connection, size):
@@ -211,7 +211,7 @@ def serve(path, model, idle_seconds, threads):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--socket', help='AF_UNIX path (default: XDG_RUNTIME_DIR/firewatch-asr/asr.sock)')
+    parser.add_argument('--socket', help='AF_UNIX path (default: XDG_RUNTIME_DIR/tui-voice/asr.sock)')
     parser.add_argument('--threads', type=int, default=DEFAULT_THREADS)
     parser.add_argument('--idle-seconds', type=int, default=900, help='idle exit; 0 = never')
     parser.add_argument('--run', action='store_true')

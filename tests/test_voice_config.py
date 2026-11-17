@@ -28,13 +28,13 @@ class DefaultsTests(unittest.TestCase):
             self.assertEqual(voice_config.config_path(),
                              Path(home) / '.config/tui-voice/config.json')
 
-    def test_no_repository_is_named_in_a_default(self):
-        with patch.dict(os.environ, {'TUI_VOICE_CONFIG': '/nonexistent/config.json'},
-                        clear=True):
-            for value in (voice_config.service(), voice_config.voice(),
-                          voice_config.config_path()):
-                self.assertNotIn('fire-tv-next', str(value))
-                self.assertNotIn('lulu', str(value))
+    def test_defaults_live_in_the_plugin_data_directory(self):
+        with patch.dict(os.environ, {'TUI_VOICE_CONFIG': '/nonexistent/config.json',
+                                     'HOME': '/home/someone'}, clear=True):
+            data = voice_config.data_home()
+            self.assertEqual(voice_config.service(), data / 'service')
+            self.assertEqual(voice_config.voice(), data / 'voice')
+            self.assertNotIn('repos', str(data))
 
 
 class ConfigFileTests(unittest.TestCase):

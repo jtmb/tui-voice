@@ -9,9 +9,9 @@
 - This setup and future per-process development output reuse
   `H:\AgentArtifacts\projects\tui-voice\runs\storage-setup-20261114`
   (`/mnt/h/AgentArtifacts/projects/tui-voice/runs/storage-setup-20261114`).
-- No model, voice bundle, interpreter, service or socket is moved. Existing
-  shared voice runtimes remain under the Fire TV voice/service paths in
-  `AGENTS.md`; they are runtime data, not disposable build output.
+- No model, voice bundle, interpreter, service or socket is moved. The
+  speech stack (`service/`, `voice/`) is runtime data under the configured or
+  default stack paths, not disposable build output.
 
 ## Per-process usage
 

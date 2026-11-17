@@ -552,7 +552,7 @@ def asr_socket():
     value = os.environ.get('TUI_VOICE_ASR_SOCKET')
     if value:
         return Path(value)
-    return runtime_base() / 'firewatch-asr/asr.sock'
+    return runtime_base() / 'tui-voice/asr.sock'
 
 
 def tts_socket():
