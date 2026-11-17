@@ -50,6 +50,14 @@ class PlatformTests(unittest.TestCase):
                     backend.detect_platform({name: 'Ubuntu-24.04'}, 'Linux version 6.1'),
                     backend.WSL2)
 
+    def test_container_on_a_wsl2_kernel_is_native_linux(self):
+        text = 'Linux version 5.15.90.1-microsoft-standard-WSL2'
+        self.assertEqual(backend.detect_platform({}, text, container=True), backend.LINUX)
+        self.assertEqual(backend.detect_platform({}, text, container=False), backend.WSL2)
+        self.assertEqual(
+            backend.detect_platform({'WSL_INTEROP': '/run/WSL/1_interop'}, text, container=True),
+            backend.WSL2)
+
     def test_proc_version_marker_detects_wsl2(self):
         self.assertEqual(
             backend.detect_platform({}, 'Linux version 5.15.90.1-microsoft-standard-WSL2'),

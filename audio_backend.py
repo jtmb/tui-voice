@@ -48,13 +48,24 @@ def _proc_version():
         return ''
 
 
-def detect_platform(environ=None, proc_version=None):
-    """Return 'wsl2' or 'linux' for this host."""
+def in_container():
+    """Docker/Podman marker files; a container has no Windows interop bridge."""
+    return any(Path(marker).exists() for marker in ('/.dockerenv', '/run/.containerenv'))
+
+
+def detect_platform(environ=None, proc_version=None, container=None):
+    """Return 'wsl2' or 'linux' for this host.
+
+    A container running on a WSL2 kernel reports "microsoft" in /proc/version
+    but cannot reach Windows audio, so it is treated as native Linux.
+    """
     environment = os.environ if environ is None else environ
     if environment.get('WSL_DISTRO_NAME') or environment.get('WSL_INTEROP'):
         return WSL2
     text = _proc_version() if proc_version is None else proc_version
-    return WSL2 if 'microsoft' in str(text).lower() else LINUX
+    if 'microsoft' not in str(text).lower():
+        return LINUX
+    return LINUX if (in_container() if container is None else container) else WSL2
 
 
 PLATFORM = detect_platform()

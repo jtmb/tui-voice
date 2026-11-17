@@ -111,10 +111,15 @@ def manager(family):
     return FAMILIES.get(family)
 
 
-def present(key, environ=None):
-    """Whether one requirement is already satisfied on this host."""
+def present(key, environ=None, python=None):
+    """Whether one requirement is already satisfied on this host.
+
+    ``python`` only matters for ``venv``: the interpreter that will create the
+    virtualenv, which can differ from the one running this module.
+    """
     if key == 'venv':
-        completed = _run([sys.executable, '-c', 'import ensurepip'], timeout=15)
+        completed = audio_backend._run([python or sys.executable, '-c', 'import ensurepip'],
+                                       timeout=15)
         return completed is not None and completed.returncode == 0
     if key == 'ffmpeg':
         try:
@@ -178,17 +183,41 @@ def _env(environ=None):
     return None if environ is None else {**os.environ, **environ}
 
 
-def plan(keys, environ=None, os_release=None, platform=None):
+def interpreter_version(python):
+    """(major, minor) of an interpreter, or None when it cannot be probed."""
+    completed = audio_backend._run(
+        [python, '-c', 'import sys; print(*sys.version_info[:2])'], timeout=15)
+    if completed is None or completed.returncode != 0:
+        return None
+    try:
+        major, minor = (int(part) for part in (completed.stdout or '').split()[:2])
+    except ValueError:
+        return None
+    return major, minor
+
+
+def package_name(family, key, packages, python=None):
+    """Distribution package for one key; venv support is per interpreter on Debian."""
+    if key == 'venv' and family == 'debian' and python:
+        version = interpreter_version(python)
+        if version:
+            return 'python%d.%d-venv' % version
+    return packages[key]
+
+
+def plan(keys, environ=None, os_release=None, platform=None, python=None):
     """Exact argv list that would install the requested requirement keys."""
     os_info = detect(os_release=os_release, platform=platform)
     if os_info.family == 'wsl2' and set(keys) <= {'ffmpeg'}:
         return plan_windows(keys, environ)
-    selected = manager(os_info.linux_family if os_info.family == 'wsl2' else os_info.family)
+    family = os_info.linux_family if os_info.family == 'wsl2' else os_info.family
+    selected = manager(family)
     if selected is None:
         return {'ok': False, 'error': f'No package manager mapping for {os_info.name}',
                 'commands': []}
     _, prefix, _, packages = selected
-    names = sorted({packages[key] for key in keys if key in packages})
+    names = sorted({package_name(family, key, packages, python)
+                    for key in keys if key in packages})
     if not names:
         return {'ok': True, 'commands': []}
     privilege = _privilege_prefix(environ)
@@ -245,25 +274,32 @@ def _run_commands(commands, environ=None, timeout=900):
     return results
 
 
-def install(keys, environ=None, os_release=None, platform=None, timeout=900):
+def _present(key, environ=None, python=None):
+    return present(key, environ, python=python) if key == 'venv' else present(key, environ)
+
+
+def install(keys, environ=None, os_release=None, platform=None, timeout=900, python=None):
     """Install the requested requirement keys non-interactively."""
     with _install_lock():
-        wanted = [key for key in keys if not present(key, environ)]
+        wanted = [key for key in keys if not _present(key, environ, python)]
         if not wanted:
             return {'ok': True, 'installed': [], 'skipped': list(keys)}
         return _install_locked(wanted, environ=environ, os_release=os_release,
-                               platform=platform, timeout=timeout)
+                               platform=platform, timeout=timeout, python=python)
 
 
-def _install_locked(wanted, environ=None, os_release=None, platform=None, timeout=900):
-    planned = plan(wanted, environ=environ, os_release=os_release, platform=platform)
+def _install_locked(wanted, environ=None, os_release=None, platform=None, timeout=900,
+                    python=None):
+    planned = plan(wanted, environ=environ, os_release=os_release, platform=platform,
+                   python=python)
     if not planned.get('ok'):
         return {'ok': False, 'installed': [], 'commands': planned.get('commands', []),
                 'error': planned.get('error'), 'manual': planned.get('manual', False)}
     results = _run_commands(planned['commands'], environ=environ, timeout=timeout)
     if any(not row['ok'] for row in results):
         # A fresh container or image can have empty package indexes; refresh once.
-        selected = manager(detect(os_release=os_release, platform=platform).family)
+        info = detect(os_release=os_release, platform=platform)
+        selected = manager(info.linux_family if info.family == 'wsl2' else info.family)
         privilege = _privilege_prefix(environ)
         if selected and selected[2] and privilege is not None:
             _run_commands([privilege + selected[2]], environ=environ, timeout=300)
@@ -272,13 +308,18 @@ def _install_locked(wanted, environ=None, os_release=None, platform=None, timeou
     for row in results:
         if row['ok']:
             for key in wanted:
-                if present(key, environ) and key not in installed:
+                if _present(key, environ, python) and key not in installed:
                     installed.append(key)
-    ok = all(present(key, environ) for key in wanted)
+    ok = all(_present(key, environ, python) for key in wanted)
     return {'ok': ok, 'installed': installed, 'results': results,
             'commands': planned['commands'],
-            'missing': [key for key in wanted if not present(key, environ)],
+            'missing': [key for key in wanted if not _present(key, environ, python)],
             'error': None if ok else 'Install command did not provide every dependency'}
+
+
+def _fix_command():
+    return [sys.executable, str(Path(__file__).resolve().with_name('voice_helper.py')),
+            'doctor', '--install']
 
 
 def ensure(install_missing=True, include_optional=False, environ=None,
@@ -297,6 +338,7 @@ def ensure(install_missing=True, include_optional=False, environ=None,
         report['ok'] = False
         report['error'] = ('Automatic installation is disabled; run '
                            'python3 voice_helper.py doctor --install')
+        report['fix'] = _fix_command()
         return report
     report['install_attempted'] = True
     report['install'] = install(keys, environ=environ, os_release=os_release,
@@ -310,6 +352,7 @@ def ensure(install_missing=True, include_optional=False, environ=None,
                                          for row in report['requirements'])]
     report['ok'] = not report['required_missing']
     if not report['ok']:
+        report['fix'] = _fix_command()
         report['error'] = report['install'].get('error') or (
             'Missing required dependencies: ' + ', '.join(report['required_missing']))
     return report

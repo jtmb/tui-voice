@@ -117,6 +117,71 @@ class PlanTests(unittest.TestCase):
         self.assertIn('TUI_VOICE_FFMPEG', planned['error'])
 
 
+class VenvTests(unittest.TestCase):
+    def test_check_on_native_linux_runs_and_reports_venv(self):
+        ok = type('R', (), {'returncode': 0})()
+        with patch.object(audio_backend, '_run', return_value=ok), \
+             patch.object(platform_deps.audio_backend, 'ffmpeg', return_value='ffmpeg'), \
+             patch.object(platform_deps.shutil, 'which', return_value='/usr/bin/x'):
+            report = platform_deps.check(os_release=DEBIAN, platform=audio_backend.LINUX)
+        self.assertIn('venv', [row['key'] for row in report['requirements']])
+        self.assertEqual(report['missing'], [])
+
+    def test_missing_ensurepip_means_venv_is_absent(self):
+        with patch.object(audio_backend, '_run', return_value=None):
+            self.assertFalse(platform_deps.present('venv'))
+
+    def test_present_probes_the_given_interpreter(self):
+        seen = []
+
+        def run(command, timeout=10, env=None):
+            seen.append(command[0])
+            return type('R', (), {'returncode': 0})()
+
+        with patch.object(audio_backend, '_run', side_effect=run):
+            self.assertTrue(platform_deps.present('venv', python='/opt/py3.12'))
+        self.assertEqual(seen, ['/opt/py3.12'])
+
+    def test_debian_asks_for_the_venv_package_of_that_interpreter(self):
+        with patch.object(platform_deps, '_privilege_prefix', return_value=[]), \
+             patch.object(platform_deps, 'interpreter_version', return_value=(3, 12)):
+            planned = platform_deps.plan(['venv'], os_release=DEBIAN,
+                                         platform=audio_backend.LINUX, python='/x/python3.12')
+        self.assertEqual(planned['commands'][0][-1], 'python3.12-venv')
+
+    def test_unprobeable_interpreter_falls_back_to_the_generic_package(self):
+        with patch.object(platform_deps, '_privilege_prefix', return_value=[]), \
+             patch.object(platform_deps, 'interpreter_version', return_value=None):
+            planned = platform_deps.plan(['venv'], os_release=DEBIAN,
+                                         platform=audio_backend.LINUX, python='/x/python')
+        self.assertEqual(planned['commands'][0][-1], 'python3-venv')
+
+    def test_other_families_ignore_the_interpreter(self):
+        with patch.object(platform_deps, '_privilege_prefix', return_value=[]):
+            planned = platform_deps.plan(['venv'], os_release=FEDORA,
+                                         platform=audio_backend.LINUX, python='/x/python3.12')
+        self.assertEqual(planned['commands'][0][-1], 'python3')
+
+
+class RefreshTests(unittest.TestCase):
+    def test_wsl2_retry_refreshes_the_linux_package_index(self):
+        calls = []
+
+        def run_commands(commands, environ=None, timeout=900):
+            calls.append(commands[0])
+            return [{'command': commands[0], 'ok': len(calls) > 2, 'code': 0, 'detail': ''}]
+
+        planned = {'ok': True, 'commands': [['apt-get', 'install', 'python3-venv']]}
+        with patch.object(platform_deps, 'plan', return_value=planned), \
+             patch.object(platform_deps, '_run_commands', side_effect=run_commands), \
+             patch.object(platform_deps, '_privilege_prefix', return_value=[]), \
+             patch.object(platform_deps, 'detect',
+                          return_value=platform_deps.OSInfo('wsl2', 'Ubuntu', '24.04', 'debian')), \
+             patch.object(platform_deps, 'present', return_value=False):
+            platform_deps._install_locked(['venv'])
+        self.assertIn(['apt-get', 'update'], calls)
+
+
 class CheckTests(unittest.TestCase):
     def check(self, data=DEBIAN, present=(), platform=audio_backend.LINUX, environ=None):
         with patch.object(platform_deps, 'present',
