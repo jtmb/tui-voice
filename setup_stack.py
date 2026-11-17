@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """Install the local Whisper/Kokoro speech stack that tui-voice drives.
 
 Users should not have to find models or wire virtualenvs. This script detects
