@@ -68,7 +68,7 @@ class StatusTests(unittest.TestCase):
         model.parent.mkdir(parents=True)
         model.write_bytes(SMALL)
         with patch.object(setup_stack, 'model_entries', return_value=[payload]), \
-             patch.object(setup_stack, 'ADAPTERS', {}), \
+             patch.object(setup_stack, 'ADAPTERS', ()), \
              patch.object(setup_stack, 'VENVS', ()):
             report = setup_stack.status(self.root)
         self.assertTrue(report['ready'])
@@ -80,17 +80,26 @@ class StatusTests(unittest.TestCase):
         model.parent.mkdir(parents=True)
         model.write_bytes(b'wrong-size')  # size differs, hash never consulted
         with patch.object(setup_stack, 'model_entries', return_value=[payload]), \
-             patch.object(setup_stack, 'ADAPTERS', {}), \
+             patch.object(setup_stack, 'ADAPTERS', ()), \
              patch.object(setup_stack, 'VENVS', ()):
             report = setup_stack.status(self.root, verify=True)
         self.assertFalse(report['ready'])
         model.write_bytes(SMALL)
         with patch.object(setup_stack, 'model_entries', return_value=[payload]), \
-             patch.object(setup_stack, 'ADAPTERS', {}), \
+             patch.object(setup_stack, 'ADAPTERS', ()), \
              patch.object(setup_stack, 'VENVS', ()):
             report = setup_stack.status(self.root, verify=True)
         self.assertTrue(report['ready'])
         self.assertTrue(report['models'][0]['hash_ok'])
+
+
+def make_venv(directory, marker=None, version='3.12.1'):
+    (directory / 'bin').mkdir(parents=True)
+    (directory / 'bin/python').write_text('')
+    (directory / 'pyvenv.cfg').write_text(f'home = /usr/bin\nversion = {version}\n')
+    if marker is not None:
+        (directory / setup_stack.MARKER).write_text(
+            json.dumps({'requirements': list(marker)}))
 
 
 class AdapterTests(unittest.TestCase):
@@ -114,14 +123,12 @@ class AdapterTests(unittest.TestCase):
         setup_stack.write_adapters(self.service, self.voice, force=True)
         self.assertIn('af_heart', voice_module.read_text())
 
-    def test_venvs_with_markers_are_skipped(self):
-        for relative, _ in setup_stack.VENVS:
-            directory = self.voice.parent / relative
-            (directory / 'bin').mkdir(parents=True)
-            (directory / 'bin/python').write_text('')
-            (directory / setup_stack.MARKER).write_text('ok\n')
+    def test_venvs_with_a_matching_marker_are_skipped(self):
+        for entry in setup_stack.VENVS:
+            make_venv(setup_stack.venv_dir(entry, self.service, self.voice),
+                      marker=entry[3])
         with patch.object(setup_stack, '_venv_ok', return_value=True):
-            installed = setup_stack.install_venvs(self.service, self.voice)
+            installed = setup_stack.install_venvs(self.service, self.voice, owned=True)
         self.assertTrue(all(row['action'] == 'kept' for row in installed))
 
 
@@ -142,12 +149,46 @@ class ModelInstallTests(unittest.TestCase):
         self.assertEqual(installed[0]['action'], 'copied from ' + str(self.source / 'm.bin'))
         self.assertEqual((self.voice / 'models/m.bin').read_bytes(), SMALL)
 
-    def test_wrong_local_model_is_rejected(self):
+    def test_wrong_local_model_is_rejected_and_never_left_behind(self):
         payload = entry()
         (self.source / 'm.bin').write_bytes(b'other-bytes')
-        with patch.object(setup_stack, 'model_entries', return_value=[payload]):
+        with patch.object(setup_stack, 'model_entries', return_value=[payload]), \
+             patch.object(setup_stack, 'download',
+                          side_effect=setup_stack.SetupError('offline')):
             with self.assertRaises(setup_stack.SetupError):
                 setup_stack.install_models(self.voice, models_from=self.source)
+        self.assertFalse((self.voice / 'models/m.bin').exists())
+        self.assertFalse((self.voice / 'models/m.bin.part').exists())
+
+    def test_bad_local_copy_falls_back_to_the_download(self):
+        payload = entry()
+        (self.source / 'm.bin').write_bytes(b'other-bytes')
+
+        def fake_download(item, destination, timeout=60):
+            destination.write_bytes(SMALL)
+
+        with patch.object(setup_stack, 'model_entries', return_value=[payload]), \
+             patch.object(setup_stack, 'download', side_effect=fake_download):
+            installed = setup_stack.install_models(self.voice, models_from=self.source)
+        self.assertIn('downloaded', installed[0]['action'])
+        self.assertIn('failed SHA-256', installed[0]['action'])
+
+    def test_a_later_good_candidate_is_used(self):
+        payload = entry(directory='sub')
+        (self.source / 'm.bin').write_bytes(b'other-bytes')
+        (self.source / 'sub').mkdir()
+        (self.source / 'sub/m.bin').write_bytes(SMALL)
+        with patch.object(setup_stack, 'model_entries', return_value=[payload]):
+            installed = setup_stack.install_models(self.voice, models_from=self.source)
+        self.assertTrue(installed[0]['action'].startswith('copied from'))
+        self.assertEqual((self.voice / 'sub/m.bin').read_bytes(), SMALL)
+
+    def test_truncated_download_is_a_setup_error(self):
+        payload = entry()
+        with patch.object(setup_stack.urllib.request, 'urlopen',
+                          side_effect=setup_stack.http.client.IncompleteRead(b'x')):
+            with self.assertRaises(setup_stack.SetupError):
+                setup_stack.download(payload, self.voice / 'models/m.bin')
 
     def test_matching_model_is_kept_without_copying(self):
         payload = entry()

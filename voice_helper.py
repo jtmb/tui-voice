@@ -528,6 +528,9 @@ def voice():
              f'"service" in {voice_config.config_path()} or TUI_VOICE_SERVICE at the '
              'directory that provides web_voice.py.')
     sys.path.insert(0, str(SERVICE))
+    # The engine finds its models through this variable; a stack configured only
+    # in config.json would otherwise fall back to a sibling directory guess.
+    os.environ.setdefault('TUI_VOICE_VOICE_DIR', str(VOICE_DIR))
     from web_voice import WebVoice
     return WebVoice()
 

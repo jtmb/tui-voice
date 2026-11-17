@@ -1,7 +1,7 @@
 import { Plugin, usePlugin } from "@opencode/plugin/tui"
 import { createEffect, createSignal, For, onCleanup } from "solid-js"
 import { spawn, execFileSync, type ChildProcess } from "node:child_process"
-import { appendFileSync, mkdirSync, readFileSync, rmSync } from "node:fs"
+import { appendFileSync, closeSync, mkdirSync, openSync, readFileSync, rmSync } from "node:fs"
 import { homedir } from "node:os"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
@@ -11,8 +11,10 @@ import { jsonLines, LiveDraft, locateComposer } from "./live_draft"
 const HERE = dirname(fileURLToPath(import.meta.url))
 const HELPER = join(HERE, "voice_helper.py")
 const SPEECH_DIR = join(process.env.XDG_RUNTIME_DIR || "/tmp", "tui-voice")
-const LOG_FILE = join(process.env.XDG_STATE_HOME || join(homedir(), ".local", "state"),
-  "tui-voice", "voice.log")
+const LOG_DIR = process.env.TUI_VOICE_LOG_DIR ||
+  join(process.env.XDG_STATE_HOME || join(homedir(), ".local", "state"), "tui-voice")
+const LOG_FILE = join(LOG_DIR, "voice.log")
+const SETUP_LOG = join(LOG_DIR, "setup.log")
 // The helper must run in the interpreter that owns the local speech stack.
 // Resolution lives in voice_config.py so the TUI, helper and workers agree:
 // TUI_VOICE_PYTHON, then the configured stack's venv, then python3.
@@ -169,15 +171,26 @@ function prewarmWorkers() {
   } catch {}
 }
 
-function background(command: string, args: string[]) {
+// Run a long installer detached, with its output in setup.log instead of nowhere.
+function background(command: string, args: string[], onExit?: (code: number | null) => void) {
   try {
-    const child = spawn(command, args, {detached: true, stdio: "ignore"})
-    child.on("error", () => {})
+    mkdirSync(LOG_DIR, {recursive: true})
+    const fd = openSync(SETUP_LOG, "a")
+    const child = spawn(command, args, {detached: true, stdio: ["ignore", fd, fd]})
+    closeSync(fd)
+    child.on("error", error => {
+      logError("background spawn", error, args.join(" "))
+      onExit?.(null)
+    })
+    child.on("exit", code => onExit?.(code))
     child.unref()
   } catch (error) {
     logError("background spawn", error)
+    onExit?.(null)
   }
 }
+
+const shellWords = (words?: string[]) => (words ?? []).join(" ")
 
 // Detect the host OS once per session, install the allow-listed audio packages
 // through its own package manager, and provision the local speech models when
@@ -188,22 +201,41 @@ async function prepareDependencies(context: any) {
     const report = await helperPayload(["doctor"], 15000)
     const autoInstall = report?.auto_install !== false
     const missing: string[] = report?.required_missing ?? []
+    const audioFix = shellWords(report?.fix) || `${PYTHON} ${HELPER} doctor --install`
     if (missing.length) {
       if (!autoInstall) {
-        toast(context, `Missing ${missing.join(", ")}: run python3 voice_helper.py doctor --install`, "warning")
+        toast(context, `Missing ${missing.join(", ")}: run ${audioFix}`, "warning")
       } else {
         toast(context, `Preparing local audio dependencies (${missing.join(", ")})…`, "info")
-        background(PYTHON, [HELPER, "doctor", "--install"])
+        background(PYTHON, [HELPER, "doctor", "--install"], code => {
+          if (code === 0) return
+          logError("audio install", new Error(`doctor --install exited ${code}`))
+          toast(context, `Could not install ${missing.join(", ")}: run ${audioFix} (see ${SETUP_LOG})`, "warning")
+        })
       }
     }
     const speech = report?.speech
-    if (speech && speech.ready === false) {
-      if (!autoInstall) {
-        toast(context, "Speech models are not installed: run python3 setup_stack.py --install", "warning")
-      } else {
-        toast(context, "Installing local speech models (one time, about 600 MB)…", "info")
-        background(PYTHON, [join(HERE, "setup_stack.py"), "--install"])
-      }
+    if (!speech || speech.ready !== false) return
+    const speechFix = shellWords(speech.fix) || `${PYTHON} ${join(HERE, "setup_stack.py")} --install`
+    if (speech.supported === false) {
+      toast(context, `Speech models cannot be installed here: ${speech.reason}`, "warning")
+    } else if (!autoInstall) {
+      toast(context, `Speech models are not installed: run ${speechFix}`, "warning")
+    } else {
+      const megabytes = Math.round((speech.download_bytes ?? 0) / 1e6)
+      const size = megabytes > 0 ? `about ${megabytes} MB of models plus Python packages` : "Python packages"
+      toast(context, `Installing local speech models (one time, ${size})…`, "info")
+      background(PYTHON, [join(HERE, "setup_stack.py"), "--install", "--json"], async code => {
+        let ready = false
+        try { ready = (await helperPayload(["doctor"], 15000))?.speech?.ready === true } catch {}
+        if (ready) {
+          toast(context, "Local speech is ready", "success")
+          return
+        }
+        if (code === 0) return // another installer holds the lock and will finish
+        logError("speech install", new Error(`setup_stack exited ${code}`))
+        toast(context, `Speech install failed (see ${SETUP_LOG}); retry with ${speechFix}`, "warning")
+      })
     }
   } catch (error) {
     logError("dependency check", error)
