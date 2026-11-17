@@ -9,6 +9,8 @@ service.json), the plugin loaded globally, and `pyte` in the interpreter:
     uv venv /tmp/sim && uv pip install --python /tmp/sim/bin/python pyte
     /tmp/sim/bin/python tests/tui_sim/drive.py plain|type|mid|inside
 
+late    the speech stack appears AFTER the TUI started (first-run race): dictation
+        must use the new interpreter without restarting the TUI
 plain   no edits (a long turn must reach the last word)
 type    type after the dictated text, then keep talking
 mid     type at the start of the text, then keep talking
@@ -44,6 +46,12 @@ wrapper.chmod(0o755)
 env = {**os.environ, "OPENCODE_PASSWORD": service["password"], "TERM": "xterm-256color",
        "TUI_VOICE_PYTHON": str(wrapper), "TUI_VOICE_LOG_DIR": str(work / "log"),
        "TUI_VOICE_AUTO_INSTALL": "0"}
+if scenario == "late":
+    # No interpreter override: the stack starts empty and gains a venv later.
+    del env["TUI_VOICE_PYTHON"]
+    env["TUI_VOICE_SERVICE"] = str(work / "stack/service")
+    env["TUI_VOICE_VOICE_DIR"] = str(work / "stack/voice")
+    env["TUI_VOICE_CONFIG"] = str(work / "no-config.json")
 cols, rows = 110, 32
 master, slave = pty.openpty()
 fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
@@ -76,12 +84,20 @@ def snap(label):
 
 F9 = b"\x1b[20~"
 pump(7)
+if scenario == "late":
+    venv_python = work / "stack/service/.venv/bin/python"
+    venv_python.parent.mkdir(parents=True)
+    venv_python.symlink_to(wrapper)  # the stack "finished installing" just now
+    pump(1)
 os.write(master, F9)
 pump(3)
 snap("listening")
 if scenario == "plain":
     pump(45)
     snap("long turn")
+elif scenario == "late":
+    pump(20)
+    snap("dictation after the stack appeared")
 elif scenario == "type":
     pump(6)
     os.write(master, b"TYPED-A ")

@@ -127,8 +127,12 @@ lives at the same path on every machine that uses the project.
 them itself: pinned files with SHA-256 verification, then the adapters and
 workers it drives. Users never download models by hand.
 
-The TUI starts this in the background on first run when the stack is missing
-(the toast says "Installing local speech models"). You can also run it yourself:
+**Agents: run `python3 setup_stack.py --install` yourself, and wait for it to print
+`ready`, before asking the user to restart the TUI.** If the TUI is the first
+thing to find the stack missing, it installs in the background (the toast says
+"Installing local speech models") and dictation or read-aloud report that the
+models are still installing until "Local speech is ready" appears. You can also
+run it yourself:
 
 ```bash
 python3 setup_stack.py                # what is missing

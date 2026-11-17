@@ -1,5 +1,34 @@
 # tui-voice handoff
 
+## 2026-11-17 — issue #4: stale interpreter on first run (Arch/Omarchy)
+
+Reported by the Omarchy laptop agent after following the Quickstart prompt:
+`ModuleNotFoundError: No module named 'numpy'` on first run, continuing even after
+the install finished, until the TUI was restarted.
+
+- **Cause:** `tui.tsx` resolved the helper interpreter once at startup. With the
+  stack not yet installed that is the system Python (3.14, no numpy); the venv
+  interpreters that appear later were never picked up. Reproduced in a real TUI
+  (`tests/tui_sim/drive.py late`: stack appears after launch → no text before the
+  fix).
+- **Fix:** `pythonPath()` re-resolves per use (1.5 s cache, reset when the install
+  ends); the TUI refuses dictation/read-aloud with "still installing" while its
+  own installer runs and prewarms the workers when it finishes;
+  `voice_helper.py` switches into the stack's interpreter when launched with
+  another one (real command line only, once, `TUI_VOICE_REEXEC`); and a missing
+  stack now raises `StackNotReady` with the exact command instead of an
+  ImportError traceback (`SystemExit` would be swallowed in a worker thread).
+- **Instructions:** the README Quickstart prompt and INSTALL.md tell agents to run
+  `setup_stack.py --install` and wait for `ready` before asking for a TUI restart,
+  so a fresh install does not race the first launch.
+- **Evidence:** `late` scenario now shows the full transcript without a restart;
+  175 Python tests pass (8 new in `tests/test_stack_not_ready.py`); a stub venv
+  makes `voice_helper.py say` switch into it, `doctor` never does.
+- **Lesson:** a first draft put the switch inside `main()`, and tests that call
+  `main()` exec'd into the real stack and started a real worker. It lives in the
+  `__main__` block now; the two stray workers/sockets were stopped and removed.
+- Not released: this is on `main` after v0.3.0. Issue #4 is left open.
+
 ## 2026-11-17 — v0.3.0 released
 
 - Published https://github.com/jtmb/tui-voice/releases/tag/v0.3.0 at

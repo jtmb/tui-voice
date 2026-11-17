@@ -519,19 +519,69 @@ def dictate(mic=None, threshold=-35, gain=0, emit=None):
         _stop_requested = False
 
 
+class StackNotReady(RuntimeError):
+    """The local speech stack is missing or still being installed."""
+
+
+REEXEC_ENV = 'TUI_VOICE_REEXEC'
+STACK_COMMANDS = ('dictate', 'say', 'transcribe', 'warm')
+
+
+def stack_interpreter():
+    """The stack's own interpreter when this process runs a different one.
+
+    The TUI picks an interpreter when it spawns the helper. During a first-run
+    install that is the system Python, which lacks numpy and the speech
+    packages; once the stack's virtualenv exists the helper moves into it.
+    """
+    wanted = voice_config.python()
+    if os.environ.get(REEXEC_ENV) or not wanted:
+        return None
+    if os.path.abspath(wanted) == os.path.abspath(sys.executable):
+        return None
+    if Path(wanted).is_file() and os.access(wanted, os.X_OK):
+        return wanted
+    return None
+
+
+def reexec_into_stack(command):
+    if command not in STACK_COMMANDS:
+        return
+    target = stack_interpreter()
+    if not target:
+        return
+    os.environ[REEXEC_ENV] = '1'
+    try:
+        os.execv(target, [target, *sys.argv])
+    except OSError as error:
+        log_event('warning', 'could not switch to the stack interpreter',
+                  interpreter=target, detail=str(error))
+
+
+def stack_fix_command():
+    return f'{sys.executable} {HERE / "setup_stack.py"} --install'
+
+
 def voice():
     module = SERVICE / 'web_voice.py'
     if not module.is_file():
         problem = voice_config.problem()
         detail = f' ({problem})' if problem else ''
-        fail(f'No local speech stack at {SERVICE}{detail}. Point '
-             f'"service" in {voice_config.config_path()} or TUI_VOICE_SERVICE at the '
-             'directory that provides web_voice.py.')
+        raise StackNotReady(
+            f'No local speech stack at {SERVICE}{detail}. If its install is still '
+            f'running wait for "Local speech is ready"; otherwise run '
+            f'{stack_fix_command()} (or point "service" in {voice_config.config_path()} '
+            'or TUI_VOICE_SERVICE at the directory that provides web_voice.py).')
     sys.path.insert(0, str(SERVICE))
     # The engine finds its models through this variable; a stack configured only
     # in config.json would otherwise fall back to a sibling directory guess.
     os.environ.setdefault('TUI_VOICE_VOICE_DIR', str(VOICE_DIR))
-    from web_voice import WebVoice
+    try:
+        from web_voice import WebVoice
+    except ImportError as error:
+        raise StackNotReady(
+            f'The speech stack is not ready ({error}). If its install is still running '
+            f'wait for "Local speech is ready"; otherwise run {stack_fix_command()}.') from None
     return WebVoice()
 
 
@@ -849,6 +899,8 @@ def transcribe(path):
         return {'ok': True, **merged}
     except SystemExit:
         raise
+    except StackNotReady as error:
+        fail(error)
     except Exception as error:
         fail('Local transcription failed: ' + str(error), detail=traceback.format_exc()[-4000:])
     finally:
@@ -1102,6 +1154,8 @@ def main():
 
 
 if __name__ == '__main__':
+    # Only the real command line may switch interpreters; tests call main() directly.
+    reexec_into_stack(next((word for word in sys.argv[1:] if not word.startswith('-')), ''))
     try:
         main()
     except SystemExit:

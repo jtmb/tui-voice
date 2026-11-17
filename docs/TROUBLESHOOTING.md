@@ -38,6 +38,16 @@ Do not move it to the composer, a dialog, or an overlay.
    `python3 voice_config.py --json` prints both directories, the interpreters,
    and `config_error` when the config file is unreadable.
 
+## "No module named 'numpy'" or "The speech stack is not ready"
+
+The helper ran in the system Python instead of the speech stack's own
+interpreter, usually because the stack was still being installed when the TUI
+started. The plugin now looks the interpreter up on every use and the helper
+switches into it when it exists, so this clears by itself once the install
+finishes ("Local speech is ready" toast). If it persists, run
+`python3 setup_stack.py` to see what is missing and `--install` to finish it;
+`python3 voice_config.py --json` shows the interpreters in use.
+
 ## "No local speech stack at ..."
 
 The plugin provisions its own stack on first run. If it is missing:

@@ -51,7 +51,7 @@
 **Using an agent?** Paste this:
 
 ```text
-Install the tui-voice OpenCode plugin. Read INSTALL.md first (repo: https://github.com/jtmb/tui-voice) and ask me whether I want it global (all projects) or local (this project only), then do the install.
+Install the tui-voice OpenCode plugin. Read INSTALL.md first (repo: https://github.com/jtmb/tui-voice) and ask me whether I want it global (all projects) or local (this project only), then do the install. Before telling me to restart the TUI, run the speech setup from INSTALL.md section 4 (python3 setup_stack.py --install) and wait for it to finish.
 ```
 
 **Doing it yourself?** Follow **[INSTALL.md](INSTALL.md)** — choose global for

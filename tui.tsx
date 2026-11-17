@@ -28,7 +28,24 @@ function helperPython(): string {
   } catch {}
   return "python3"
 }
-const PYTHON = helperPython()
+// The stack's interpreter can appear while the TUI is open (first-run install),
+// so it is resolved per use, not once at startup. A short cache keeps rapid
+// spawns cheap.
+let cachedPython = ""
+let cachedPythonAt = 0
+function pythonPath(): string {
+  if (process.env.TUI_VOICE_PYTHON) return process.env.TUI_VOICE_PYTHON
+  const now = Date.now()
+  if (!cachedPython || now - cachedPythonAt > 1500) {
+    cachedPython = helperPython()
+    cachedPythonAt = now
+  }
+  return cachedPython
+}
+
+// True while this TUI's own background installer is provisioning the stack.
+let speechInstalling = false
+const NEEDS_STACK = new Set(["dictate", "say", "transcribe", "warm"])
 
 function logError(where: string, error: any, detail?: string) {
   try {
@@ -104,8 +121,11 @@ function toast(context: any, message: string, variant: "info" | "success" | "war
 
 function helperPayload(args: string[], timeoutMs: number | null, track?: (child: ChildProcess | null) => void,
   onEvent?: (event: any) => void): Promise<any> {
+  if (speechInstalling && NEEDS_STACK.has(args[0])) {
+    return Promise.reject(new Error("Speech models are still installing. Try again when “Local speech is ready” appears."))
+  }
   return new Promise((resolve, reject) => {
-    const childProcess = spawn(PYTHON, [HELPER, ...args], {stdio: ["ignore", "pipe", "pipe"]})
+    const childProcess = spawn(pythonPath(), [HELPER, ...args], {stdio: ["ignore", "pipe", "pipe"]})
     track?.(childProcess)
     let stdout = ""
     let stderr = ""
@@ -163,9 +183,9 @@ function helperPayload(args: string[], timeoutMs: number | null, track?: (child:
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
 
 function prewarmWorkers() {
-  if (!PYTHON) return
+  if (speechInstalling) return
   try {
-    const worker = spawn(PYTHON, [HELPER, "warm", "--start"], {detached: true, stdio: "ignore"})
+    const worker = spawn(pythonPath(), [HELPER, "warm", "--start"], {detached: true, stdio: "ignore"})
     worker.on("error", () => {})
     worker.unref()
   } catch {}
@@ -201,13 +221,13 @@ async function prepareDependencies(context: any) {
     const report = await helperPayload(["doctor"], 15000)
     const autoInstall = report?.auto_install !== false
     const missing: string[] = report?.required_missing ?? []
-    const audioFix = shellWords(report?.fix) || `${PYTHON} ${HELPER} doctor --install`
+    const audioFix = shellWords(report?.fix) || `${pythonPath()} ${HELPER} doctor --install`
     if (missing.length) {
       if (!autoInstall) {
         toast(context, `Missing ${missing.join(", ")}: run ${audioFix}`, "warning")
       } else {
         toast(context, `Preparing local audio dependencies (${missing.join(", ")})…`, "info")
-        background(PYTHON, [HELPER, "doctor", "--install"], code => {
+        background(pythonPath(), [HELPER, "doctor", "--install"], code => {
           if (code === 0) return
           logError("audio install", new Error(`doctor --install exited ${code}`))
           toast(context, `Could not install ${missing.join(", ")}: run ${audioFix} (see ${SETUP_LOG})`, "warning")
@@ -216,7 +236,7 @@ async function prepareDependencies(context: any) {
     }
     const speech = report?.speech
     if (!speech || speech.ready !== false) return
-    const speechFix = shellWords(speech.fix) || `${PYTHON} ${join(HERE, "setup_stack.py")} --install`
+    const speechFix = shellWords(speech.fix) || `${pythonPath()} ${join(HERE, "setup_stack.py")} --install`
     if (speech.supported === false) {
       toast(context, `Speech models cannot be installed here: ${speech.reason}`, "warning")
     } else if (!autoInstall) {
@@ -225,10 +245,14 @@ async function prepareDependencies(context: any) {
       const megabytes = Math.round((speech.download_bytes ?? 0) / 1e6)
       const size = megabytes > 0 ? `about ${megabytes} MB of models plus Python packages` : "Python packages"
       toast(context, `Installing local speech models (one time, ${size})…`, "info")
-      background(PYTHON, [join(HERE, "setup_stack.py"), "--install", "--json"], async code => {
+      speechInstalling = true
+      background(pythonPath(), [join(HERE, "setup_stack.py"), "--install", "--json"], async code => {
+        speechInstalling = false
+        cachedPython = "" // the stack's own interpreter exists now
         let ready = false
         try { ready = (await helperPayload(["doctor"], 15000))?.speech?.ready === true } catch {}
         if (ready) {
+          prewarmWorkers()
           toast(context, "Local speech is ready", "success")
           return
         }
