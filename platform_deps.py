@@ -29,32 +29,38 @@ import audio_backend
 
 AUTO_INSTALL_ENV = 'TUI_VOICE_AUTO_INSTALL'
 
-OSInfo = namedtuple('OSInfo', 'family name version')
+OSInfo = namedtuple('OSInfo', 'family name version linux_family')
 Requirement = namedtuple('Requirement', 'key label required reason')
 
 REQUIREMENTS = (
     Requirement('ffmpeg', 'ffmpeg', True, 'microphone capture and local playback'),
     Requirement('pactl', 'pactl', False, 'descriptive device list'),
     Requirement('arecord', 'arecord', False, 'ALSA fallback device list'),
+    Requirement('venv', 'python3-venv', False, 'virtualenvs for the speech stack'),
 )
 
 # family -> (manager, install prefix, refresh command, package per requirement)
 FAMILIES = {
     'debian': ('apt-get', ['apt-get', 'install', '-y', '--no-install-recommends'],
                ['apt-get', 'update'],
-               {'ffmpeg': 'ffmpeg', 'pactl': 'pulseaudio-utils', 'arecord': 'alsa-utils'}),
+               {'ffmpeg': 'ffmpeg', 'pactl': 'pulseaudio-utils', 'arecord': 'alsa-utils',
+                'venv': 'python3-venv'}),
     'fedora': ('dnf', ['dnf', 'install', '-y'],
                ['dnf', 'makecache'],
-               {'ffmpeg': 'ffmpeg', 'pactl': 'pulseaudio-utils', 'arecord': 'alsa-utils'}),
+               {'ffmpeg': 'ffmpeg', 'pactl': 'pulseaudio-utils', 'arecord': 'alsa-utils',
+                'venv': 'python3'}),
     'arch': ('pacman', ['pacman', '-S', '--needed', '--noconfirm'],
              [],
-             {'ffmpeg': 'ffmpeg', 'pactl': 'libpulse', 'arecord': 'alsa-utils'}),
+             {'ffmpeg': 'ffmpeg', 'pactl': 'libpulse', 'arecord': 'alsa-utils',
+              'venv': 'python'}),
     'suse': ('zypper', ['zypper', '--non-interactive', 'install'],
              ['zypper', '--non-interactive', 'refresh'],
-             {'ffmpeg': 'ffmpeg', 'pactl': 'pulseaudio-utils', 'arecord': 'alsa-utils'}),
+             {'ffmpeg': 'ffmpeg', 'pactl': 'pulseaudio-utils', 'arecord': 'alsa-utils',
+              'venv': 'python3'}),
     'alpine': ('apk', ['apk', 'add', '--no-cache'],
                ['apk', 'update'],
-               {'ffmpeg': 'ffmpeg', 'pactl': 'pulseaudio-utils', 'arecord': 'alsa-utils'}),
+               {'ffmpeg': 'ffmpeg', 'pactl': 'pulseaudio-utils', 'arecord': 'alsa-utils',
+                'venv': 'py3-pip'}),
 }
 
 ID_FAMILIES = {
@@ -89,14 +95,16 @@ def detect(os_release=None, platform=None):
     data = _os_release() if os_release is None else os_release
     name = data.get('PRETTY_NAME') or data.get('NAME') or current
     version = data.get('VERSION_ID', '')
-    if current == audio_backend.WSL2:
-        return OSInfo('wsl2', data.get('NAME') or 'WSL2', version)
     candidates = [data.get('ID', '')] + (data.get('ID_LIKE') or '').split()
+    linux_family = 'unknown'
     for candidate in candidates:
         family = ID_FAMILIES.get(candidate.strip().lower())
         if family:
-            return OSInfo(family, name, version)
-    return OSInfo('unknown', name, version)
+            linux_family = family
+            break
+    if current == audio_backend.WSL2:
+        return OSInfo('wsl2', data.get('NAME') or 'WSL2', version, linux_family)
+    return OSInfo(linux_family, name, version, linux_family)
 
 
 def manager(family):
@@ -105,6 +113,9 @@ def manager(family):
 
 def present(key, environ=None):
     """Whether one requirement is already satisfied on this host."""
+    if key == 'venv':
+        completed = _run([sys.executable, '-c', 'import ensurepip'], timeout=15)
+        return completed is not None and completed.returncode == 0
     if key == 'ffmpeg':
         try:
             audio_backend.ffmpeg()
@@ -170,9 +181,9 @@ def _env(environ=None):
 def plan(keys, environ=None, os_release=None, platform=None):
     """Exact argv list that would install the requested requirement keys."""
     os_info = detect(os_release=os_release, platform=platform)
-    if os_info.family == 'wsl2':
+    if os_info.family == 'wsl2' and set(keys) <= {'ffmpeg'}:
         return plan_windows(keys, environ)
-    selected = manager(os_info.family)
+    selected = manager(os_info.linux_family if os_info.family == 'wsl2' else os_info.family)
     if selected is None:
         return {'ok': False, 'error': f'No package manager mapping for {os_info.name}',
                 'commands': []}

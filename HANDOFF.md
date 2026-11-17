@@ -1,5 +1,37 @@
 # tui-voice handoff
 
+## 2026-11-17 — self-provisioning speech stack
+
+- A fresh checkout previously ended at "point it at your stack": users had to
+  find ~600 MB of models and build three virtualenvs themselves, so dictation
+  and read-aloud stayed dead after a correct install.
+- `setup_stack.py` now provisions the whole stack: pinned Kokoro FP32 + voices and
+  Whisper base.en manifests with SHA-256, the adapter sources in `stack/`
+  (`web_voice.py`, `asr-worker.py`, `voices.py`, `neural-models.json`,
+  `asr-models.json`), and `service/.venv`, `voice/.venv`, `voice/.asr-venv` with
+  pinned packages. Idempotent; a user-provided stack is kept unless `--force`.
+- CLI: `python3 setup_stack.py` (status), `--install`, `--selftest`,
+  `--models-from DIR`, `--root DIR`, `--verify`, `--json`. Downloads are atomic
+  with hash verification and bounded progress output.
+- The pinned kokoro-onnx build supports CPython 3.10–3.13, so the installer picks
+  a compatible interpreter, falls back to `virtualenv`/`uv venv --seed` (uv can
+  fetch 3.12), and finally asks the distro for `python3-venv`.
+- `doctor` reports a `speech` block; the TUI runs `setup_stack.py --install` in
+  the background on first run when the stack is missing, with a toast, gated by
+  `TUI_VOICE_AUTO_INSTALL`.
+- Verified end to end twice on this host: `--models-from` copy and a real
+  download (43 s, ~500 MB of models, every hash checked), then cold transcribe
+  2.3 s, warm transcribe 0.85 s through the generated `asr-worker.py`, cold say
+  2.1 s, warm say one chunk through the generated `voices.py`, and a clean
+  `warm --stop`. Both 1.7 GB test roots were deleted afterwards.
+- Tests: 125 pass (13 new in `tests/test_setup_stack.py`); `py_compile` clean;
+  a fresh TUI client still starts with `doctor` at ~2.3 s and no toasts because
+  both audio and speech are present here.
+- Not verified: installations on Fedora/Arch/SUSE/Alpine hosts, WinGet model
+  paths, or dictation through the new stack on WSL2 (capture itself was verified
+  earlier). Download speed on slow/metered links is unknown.
+- No release was cut.
+
 ## 2026-11-17 — OS-aware dependency installation
 
 - Added `platform_deps.py`: reads `/etc/os-release` (WSL2 detected first), maps

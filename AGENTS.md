@@ -41,6 +41,7 @@ product/UI names here are `tui-voice` / `tui.voice`.
 | Entrypoint | `./tui` → `tui.tsx` |
 | Helper | `voice_helper.py` |
 | Configuration | env vars, then `~/.config/tui-voice/config.json`, then `~/.local/share/tui-voice` (`voice_config.py`) |
+| Speech models | Installed by `setup_stack.py` into `service/` and `voice/` (pinned models, three venvs) |
 | Speech service | `service` setting: directory providing `web_voice.py` and `.venv` |
 | Voice directory | `voice` setting: models, `asr-worker.py`, `.asr-venv`, `.venv` |
 | Python | `TUI_VOICE_PYTHON`, then `service/.venv/bin/python`, then `python3` |
@@ -63,6 +64,9 @@ live_dictation.py       Single-flight bounded streaming ASR and live hypotheses
 voice_helper.py         Local mic capture, VAD, Whisper transcription, Kokoro TTS
 audio_backend.py        Platform audio: ffmpeg, devices, capture argv, playback
 voice_config.py         Portable settings: stack dirs, interpreters, audio overrides
+platform_deps.py        OS detection and audio package installation
+setup_stack.py          Downloads models, creates venvs, writes the stack adapters
+stack/                  Adapter sources installed into the stack (web_voice, asr-worker, voices)
 tts_worker.py           Persistent local Kokoro worker (AF_UNIX, no cloud)
 README.md               Product page for users (not documentation)
 INSTALL.md              Install guide: global vs project-local plugin scope
@@ -95,6 +99,11 @@ python3 voice_config.py --json
 
 # OS dependency report; --install acts on it (needs root or passwordless sudo)
 python3 voice_helper.py doctor
+
+# Speech stack: status, install, or verify end to end
+python3 setup_stack.py
+python3 setup_stack.py --install
+python3 setup_stack.py --install --selftest
 
 # Local voice helper checks (the helper runs in the stack interpreter)
 python3 voice_helper.py devices

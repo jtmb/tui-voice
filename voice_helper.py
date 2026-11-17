@@ -26,6 +26,7 @@ import wave
 
 import audio_backend
 import platform_deps
+import setup_stack
 import voice_config
 from tts_worker import CPU_PROVIDER, requested_provider, startup_timeout, validate_backend
 from live_dictation import FRAME_BYTES, LiveTranscriber
@@ -1061,6 +1062,7 @@ def main():
                                           include_optional=args.all)
         else:
             report = platform_deps.check()
+        report['speech'] = setup_stack.status()
         output(report, 0 if report.get('ok') else 1)
 
     if args.command == 'warm':

@@ -40,17 +40,23 @@ Do not move it to the composer, a dialog, or an overlay.
 
 ## "No local speech stack at ..."
 
-`tui-voice` drives an external local stack and bundles no models. Point it at
-yours in `~/.config/tui-voice/config.json`:
+The plugin provisions its own stack on first run. If it is missing:
 
-```json
-{"service": "/path/to/service", "voice": "/path/to/voice"}
+```bash
+python3 setup_stack.py                 # list what is missing
+python3 setup_stack.py --install       # download models, create the venvs
+python3 setup_stack.py --install --selftest
 ```
 
-or set `TUI_VOICE_SERVICE` and `TUI_VOICE_VOICE_DIR`. The `service` directory
-must provide `web_voice.py`; the `voice` directory holds `asr-worker.py`, the
-worker virtualenvs, and `neural-models.json`. `python3 voice_config.py --json`
-prints what was resolved and reports `config_error` for a broken/invalid file.
+`--install` needs network access for the pinned models and packages. If you
+already have the models, `--models-from /path/to/models` copies and verifies them
+instead. If you point the plugin at a custom stack, set `service` and `voice` in
+`~/.config/tui-voice/config.json` or with `TUI_VOICE_SERVICE` /
+`TUI_VOICE_VOICE_DIR`; `python3 voice_config.py --json` shows what was resolved.
+
+The pinned speech packages need Python 3.10–3.13. The installer picks a
+compatible interpreter and, when `uv` is available, can fetch CPython 3.12; on a
+3.14-only host without `uv`, install `python3.12`/`python3-venv` first.
 
 ## Native Linux audio
 

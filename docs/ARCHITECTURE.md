@@ -172,6 +172,21 @@ is returned instead. `TUI_VOICE_AUTO_INSTALL=0` disables the automatic path.
 `voice_helper.py doctor` prints the same report, and `ffmpeg()` retries once
 after a successful install.
 
+## Speech stack provisioning
+
+`setup_stack.py` makes a new machine self-sufficient. It downloads the pinned
+Kokoro and Whisper files into `voice/models/`, verifies every SHA-256, creates
+`service/.venv`, `voice/.venv` and `voice/.asr-venv`, and writes the adapter
+modules from `stack/` (`web_voice.py`, `asr-worker.py`, `voices.py`,
+`neural-models.json`, `asr-models.json`). Existing files and virtualenvs in a
+user-provided stack are left untouched unless `--force` is passed.
+
+The pinned packages support CPython 3.10–3.13, so the installer selects a
+compatible interpreter; `uv venv --seed` is the fallback that can fetch CPython
+3.12 when the host only has 3.14. The TUI runs `setup_stack.py --install` in the
+background when `doctor` reports the stack missing and `TUI_VOICE_AUTO_INSTALL`
+is enabled.
+
 ## Configuration
 
 `voice_config.py` is the single source of truth for stack paths, interpreters and

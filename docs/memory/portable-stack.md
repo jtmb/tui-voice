@@ -47,3 +47,16 @@ is required; `pactl`/`arecord` are optional. Installs are argv lists, need root
 or passwordless `sudo -n`, and fall back to printing the exact command.
 `TUI_VOICE_AUTO_INSTALL=0` disables it. Do not add package upgrades, third-party
 repositories or anything outside the allow-list to this path.
+
+## Speech models
+
+`setup_stack.py` provisions the stack itself: pinned Kokoro FP32 + voices and
+Whisper base.en (SHA-256 in `stack/*.json`), the adapters in `stack/`, and three
+venvs with pinned packages. It is idempotent and keeps a user-provided stack
+intact. The pinned `kokoro-onnx` needs CPython 3.10–3.13; the installer selects a
+compatible interpreter and can fall back to `uv venv --seed` (fetching 3.12) or
+the distro `python3-venv` package.
+
+`doctor` exposes the same state as its `speech` block. Never publish models or a
+stack into the repository; the manifests and adapter sources are the deliverable,
+the binaries are downloaded on the user's machine.

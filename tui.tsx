@@ -169,24 +169,42 @@ function prewarmWorkers() {
   } catch {}
 }
 
-// Detect the host OS once per session and install the allow-listed audio
-// packages (ffmpeg and friends) through its own package manager. Disabled with
-// TUI_VOICE_AUTO_INSTALL=0; the helper reports the exact command when it cannot
-// install without privileges.
-async function prepareDependencies(context: any) {
+function background(command: string, args: string[]) {
   try {
-    const report = await helperPayload(["doctor"], 8000)
-    const missing: string[] = report?.required_missing ?? []
-    if (!missing.length) return
-    if (report?.auto_install === false) {
-      toast(context, `Missing ${missing.join(", ")}: run python3 voice_helper.py doctor --install`, "warning")
-      return
-    }
-    toast(context, `Preparing local audio dependencies (${missing.join(", ")})…`, "info")
-    const child = spawn(PYTHON, [HELPER, "doctor", "--install"],
-      {detached: true, stdio: "ignore"})
+    const child = spawn(command, args, {detached: true, stdio: "ignore"})
     child.on("error", () => {})
     child.unref()
+  } catch (error) {
+    logError("background spawn", error)
+  }
+}
+
+// Detect the host OS once per session, install the allow-listed audio packages
+// through its own package manager, and provision the local speech models when
+// they are absent. Disabled with TUI_VOICE_AUTO_INSTALL=0; the helper reports
+// the exact command when it cannot install without privileges.
+async function prepareDependencies(context: any) {
+  try {
+    const report = await helperPayload(["doctor"], 15000)
+    const autoInstall = report?.auto_install !== false
+    const missing: string[] = report?.required_missing ?? []
+    if (missing.length) {
+      if (!autoInstall) {
+        toast(context, `Missing ${missing.join(", ")}: run python3 voice_helper.py doctor --install`, "warning")
+      } else {
+        toast(context, `Preparing local audio dependencies (${missing.join(", ")})…`, "info")
+        background(PYTHON, [HELPER, "doctor", "--install"])
+      }
+    }
+    const speech = report?.speech
+    if (speech && speech.ready === false) {
+      if (!autoInstall) {
+        toast(context, "Speech models are not installed: run python3 setup_stack.py --install", "warning")
+      } else {
+        toast(context, "Installing local speech models (one time, about 600 MB)…", "info")
+        background(PYTHON, [join(HERE, "setup_stack.py"), "--install"])
+      }
+    }
   } catch (error) {
     logError("dependency check", error)
   }

@@ -31,7 +31,7 @@ the plugin is discovered twice and its footer/commands can appear twice.
 | **ffmpeg** | Installed automatically on first run for the detected OS. WSL2 installs the Windows build with WinGet. |
 | **Local audio server** | Linux: PipeWire or PulseAudio. ALSA is the fallback. Nothing is uploaded. |
 | **Python 3.9+** | Runs the helper. The speech stack's own virtualenv is used when one is configured. |
-| **A local speech stack** | `tui-voice` drives an existing local Whisper/Kokoro stack; it bundles no models and assumes no repository. You point it at your stack in step 4. |
+| **Speech models** | Whisper and Kokoro models plus three virtualenvs, installed automatically on first run (about 600 MB, once). Point the plugin at your own stack instead if you already have one. |
 
 No cloud account, API key, or network service is used for speech.
 
@@ -121,15 +121,38 @@ copy the repository.
 An absolute symlink is machine-specific: don't commit it unless the checkout
 lives at the same path on every machine that uses the project.
 
-## 4. Point it at your speech stack
+## 4. Speech models
 
-`tui-voice` does not ship models and does not assume any particular checkout.
-It needs two directories from your local stack:
+`tui-voice` needs Whisper and Kokoro models plus three virtualenvs. It installs
+them itself: pinned files with SHA-256 verification, then the adapters and
+workers it drives. Users never download models by hand.
+
+The TUI starts this in the background on first run when the stack is missing
+(the toast says "Installing local speech models"). You can also run it yourself:
+
+```bash
+python3 setup_stack.py                # what is missing
+python3 setup_stack.py --install      # download models, create venvs, write adapters
+python3 setup_stack.py --install --selftest
+python3 setup_stack.py --install --models-from /path/to/existing/models
+```
+
+It installs into `~/.local/share/tui-voice/{service,voice}` unless you configured
+another stack. About 600 MB for the models and roughly 1 GB once the virtualenvs
+exist. The pinned packages support **Python 3.10–3.13**; the installer picks a
+compatible interpreter and, when `uv` is available, can fetch CPython 3.12 by
+itself.
+
+Disable automatic provisioning with `TUI_VOICE_AUTO_INSTALL=0`.
+
+### Use your own stack instead
+
+Anything that satisfies this contract works; nothing else is required:
 
 | Setting | What it must provide |
 | --- | --- |
-| `service` | A directory on `PYTHONPATH` with `web_voice.py` exposing `WebVoice`, plus an optional `.venv/bin/python`. |
-| `voice` | The models directory plus the `asr-worker.py` script, `.asr-venv/bin/python`, `.venv/bin/python` and `neural-models.json`. |
+| `service` | A directory on `PYTHONPATH` with `web_voice.py` exposing `WebVoice.transcribe` and `WebVoice.speak`, plus an optional `.venv/bin/python`. |
+| `voice` | `models/` with the Kokoro and Whisper files, `neural-models.json`, `voices.py`, `asr-worker.py`, `.asr-venv/bin/python` and `.venv/bin/python`. |
 
 Create `~/.config/tui-voice/config.json` (or
 `$XDG_CONFIG_HOME/tui-voice/config.json`):
@@ -147,10 +170,10 @@ chmod 700 ~/.config/tui-voice
 $EDITOR ~/.config/tui-voice/config.json
 ```
 
-Environment variables override the file. When neither is set, the plugin looks
-in its own data directory, `~/.local/share/tui-voice/service` and
-`~/.local/share/tui-voice/voice` (or `$XDG_DATA_HOME`), so you can also symlink
-a stack there instead of writing a config file.
+Environment variables override the file. When neither is set, the plugin uses
+its own data directory, `~/.local/share/tui-voice/service` and
+`~/.local/share/tui-voice/voice` (or `$XDG_DATA_HOME`), which is exactly what
+`setup_stack.py` populates.
 
 | Setting | Environment variable | Default |
 | --- | --- | --- |
