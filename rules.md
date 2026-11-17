@@ -78,7 +78,33 @@ requirements remain.
 - Audio is local; temporary capture files are deleted after transcription.
 - Warm ASR/TTS workers are local AF_UNIX helpers; keep them local and optional.
 - No cloud service, TV, ADB, Control Center login, upload, or automatic prompt send.
-- Use the existing local Whisper/Kokoro stack; do not add a remote provider.
+- Use a local Whisper/Kokoro stack; the plugin provisions its own by default
+  (`setup_stack.py`). Do not add a remote provider.
+
+## Portability, dependencies and testing
+
+- **Every change is tested for multi-OS compatibility.** The supported matrix is
+  native Linux (Debian/Ubuntu first, plus Fedora/RHEL, Arch, openSUSE, Alpine) and
+  WSL2. A feature is not done because it works on the development host alone;
+  record which OS families were exercised and name any that were not.
+- **Every required dependency is verified, not assumed.** From a clean state,
+  prove that the audio packages (`ffmpeg`, PulseAudio/PipeWire or ALSA tools), a
+  supported Python, and the Whisper/Kokoro models and virtualenvs are present or
+  installed. Nothing may rely on one developer's home directory, checkout, shell
+  profile, or preinstalled tools.
+- **Dependency provisioning ships as a deterministic script in this repository.**
+  `platform_deps.py` (OS packages) and `setup_stack.py` (models and virtualenvs)
+  are the only supported paths: fixed package allow-list, pinned versions and
+  SHA-256 for every download, argv-only commands, idempotent reruns that change
+  nothing when the machine is already correct, and an actionable error naming the
+  exact command when privileges or network are unavailable. Do not replace them
+  with prose setup steps or an interactive installer.
+- **No manual procurement step is acceptable.** A user on a supported OS with a
+  network connection must reach working dictation and read-aloud without
+  downloading a model by hand or building a virtualenv. Offline installs may copy
+  an existing model set (`--models-from`) but stay hash-verified.
+- Never fall back to a cloud provider when a local dependency is missing; fail
+  with the deterministic command that fixes it.
 
 ## Verification gates
 
@@ -90,3 +116,9 @@ requirements remain.
 - Read-aloud On produces local speech; Off produces none. Muting during speech
   and unmuting resumes the interrupted reply.
 - Plugin survives a full TUI restart.
+- `voice_helper.py doctor` reports audio and speech ready on a clean supported
+  OS, and names the exact command when something is missing.
+- `setup_stack.py --install` is idempotent: a second run keeps the existing
+  files and virtualenvs and changes nothing.
+- Dependency installation was exercised on every OS family claimed as supported;
+  untested families are named explicitly in the handoff.

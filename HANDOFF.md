@@ -1,5 +1,19 @@
 # tui-voice handoff
 
+## 2026-11-17 — owner rules: multi-OS testing and deterministic dependencies
+
+- `rules.md` now requires every change to be tested for multi-OS compatibility
+  (Debian/Ubuntu, Fedora/RHEL, Arch, openSUSE, Alpine, WSL2), verified
+  dependencies from a clean state, and provisioning only through the
+  deterministic scripts (`platform_deps.py`, `setup_stack.py`: allow-list,
+  pinned versions, SHA-256, argv-only, idempotent). New verification gates cover
+  `doctor` and stack idempotency.
+- Idempotency verified for real: a second `setup_stack.py --install` on the same
+  root reported `kept` for 5 adapters, 6 models and 3 venvs, exit 0,
+  `ready: true`; the 1.7 GB test root was removed.
+- Not tested here: the non-Debian package managers and WSL2 model paths listed
+  in the matrix. They remain named as unverified in this handoff.
+
 ## 2026-11-17 — self-provisioning speech stack
 
 - A fresh checkout previously ended at "point it at your stack": users had to
