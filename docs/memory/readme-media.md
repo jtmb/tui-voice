@@ -6,17 +6,19 @@
 
 ## Decision
 
-The product page hero media is `docs/media/gameplay.gif` (960x531, 8.1 s loop,
-six held states) with `docs/media/gameplay-poster.png` as its still. The README
-frames it as a real capture and must keep doing so.
+The product page hero media is `docs/media/gameplay.gif` (960x531, 9.2 s loop,
+17 frames sampled from a real capture timeline) with
+`docs/media/gameplay-poster.png` as its still. The README frames it as a real
+capture and must keep doing so.
 
 ## What it actually shows
 
 Rendered from the bytes a live OpenCode TUI session emitted with the local
-plugin loaded: idle footer panel with the startup toast, the command palette,
-the palette filtered to the six `Voice:` commands, the composer again, the
-Voice settings dialog, and the closed footer. No frame is staged, recreated
-from memory, or edited to add UI.
+plugin loaded: the idle footer panel with the startup toast, the command palette
+being filtered letter by letter as `voice` is typed, the palette selection
+moving through the six `Voice:` commands, the composer again, and the Voice
+settings dialog with its selection moving. No frame is staged, recreated from
+memory, or edited to add UI.
 
 ## Constraints
 
@@ -30,8 +32,10 @@ from memory, or edited to add UI.
 
 ## Regeneration
 
-`capture_tui.py` drives a real TUI over a pty and stores raw bytes plus chunk
-timings; `render_demo.py` replays that stream with `render_tui.py` (grid parser
-plus Pillow) and writes the GIF and poster. Re-run both through
+`capture_live.py` drives a real TUI over a pty, typing one key at a time and
+moving selections, and stores raw bytes plus chunk timings; `render_live.py`
+replays that stream with `render_tui.py` (grid parser plus Pillow) at 10 fps,
+merging identical frames into holds. Re-run both through
 `tools/artifact_env.py --reserve-bytes ... --` and copy only the two media files
-into `docs/media/`.
+into `docs/media/`. Do not replace the timeline with a handful of keyframes: the
+owner asked for it to read as playback, not a slideshow.
