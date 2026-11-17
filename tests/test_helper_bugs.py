@@ -62,6 +62,21 @@ class HelperBugTests(unittest.TestCase):
                 self.assertEqual(
                     helper._bounded_env_int(name, default, maximum), expected)
 
+    def test_default_asr_threads_follow_physical_core_count(self):
+        for logical, expected in ((1, 1), (2, 1), (3, 1), (4, 2),
+                                  (8, 4), (16, 8), (32, 8)):
+            with self.subTest(logical=logical), \
+                 patch.object(helper.os, 'cpu_count', return_value=logical), \
+                 patch.object(helper.os, 'sched_getaffinity', create=True,
+                              return_value=set(range(logical))):
+                self.assertEqual(helper._default_asr_threads(), expected)
+
+    def test_explicit_asr_threads_override_beats_adaptive_default(self):
+        with patch.dict(os.environ, {'TUI_VOICE_ASR_THREADS': '3'}):
+            value = helper._bounded_env_int(
+                'TUI_VOICE_ASR_THREADS', helper._default_asr_threads(), 8)
+        self.assertEqual(value, 3)
+
     def test_start_worker_passes_clamped_threads(self):
         completed = type('Completed', (), {'returncode': 0, 'stdout': '', 'stderr': ''})()
         for kind, attribute, requested, expected in (
