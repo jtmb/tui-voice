@@ -1,7 +1,7 @@
 import { Plugin, usePlugin } from "@opencode/plugin/tui"
 import { createEffect, createSignal, For, onCleanup } from "solid-js"
 import { spawn, type ChildProcess } from "node:child_process"
-import { appendFileSync, mkdirSync, readFileSync, rmSync } from "node:fs"
+import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync } from "node:fs"
 import { homedir } from "node:os"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
@@ -13,8 +13,16 @@ const HELPER = join(HERE, "voice_helper.py")
 const SPEECH_DIR = join(process.env.XDG_RUNTIME_DIR || "/tmp", "tui-voice")
 const LOG_FILE = join(process.env.XDG_STATE_HOME || join(homedir(), ".local", "state"),
   "tui-voice", "voice.log")
-const PYTHON = process.env.TUI_VOICE_PYTHON
-  || "/home/brajam/repos/fire-tv-next/lulu-launcher/service/.venv/bin/python"
+// The helper must run in the local speech stack's interpreter. Prefer an
+// explicit override, else the service virtualenv when it exists, else python3.
+function helperPython(): string {
+  if (process.env.TUI_VOICE_PYTHON) return process.env.TUI_VOICE_PYTHON
+  const service = process.env.TUI_VOICE_SERVICE
+    || join(homedir(), "repos", "fire-tv-next", "lulu-launcher", "service")
+  const venv = join(service, ".venv", "bin", "python")
+  return existsSync(venv) ? venv : "python3"
+}
+const PYTHON = helperPython()
 
 function logError(where: string, error: any, detail?: string) {
   try {
@@ -91,7 +99,6 @@ function toast(context: any, message: string, variant: "info" | "success" | "war
 function helperPayload(args: string[], timeoutMs: number | null, track?: (child: ChildProcess | null) => void,
   onEvent?: (event: any) => void): Promise<any> {
   return new Promise((resolve, reject) => {
-    if (!PYTHON) { reject(new Error("TUI_VOICE_PYTHON is not configured")); return }
     const childProcess = spawn(PYTHON, [HELPER, ...args], {stdio: ["ignore", "pipe", "pipe"]})
     track?.(childProcess)
     let stdout = ""

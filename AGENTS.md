@@ -41,16 +41,17 @@ all product/UI names here are `tui-voice` / `tui.voice`.
 | Entrypoint | `./tui` → `tui.tsx` |
 | Helper | `voice_helper.py` |
 | Whisper service | `~/repos/fire-tv-next/lulu-launcher/service` (override `TUI_VOICE_SERVICE`) |
-| Python | `.../service/.venv/bin/python` (override `TUI_VOICE_PYTHON`) |
+| Python | `.../service/.venv/bin/python` when present, else `python3` (override `TUI_VOICE_PYTHON`) |
 | Warm ASR Python | `.../voice/.asr-venv/bin/python` (override `TUI_VOICE_ASR_PYTHON`) |
 | Warm TTS Python | `.../voice/.venv/bin/python` (override `TUI_VOICE_TTS_PYTHON`) |
-| Windows ffmpeg | WinGet Gyan.FFmpeg, auto-discovered (override `TUI_VOICE_FFMPEG`) |
+| ffmpeg | WSL2: WinGet Gyan.FFmpeg auto-discovered. Linux: system `ffmpeg` (override `TUI_VOICE_FFMPEG`) |
+| Playback tool | Linux: `pw-play`/`paplay`/`aplay`/`ffplay` auto-detected (override `TUI_VOICE_PLAYER`) |
 | Microphone | Automatic; override `TUI_VOICE_MIC` |
 | Error log | `~/.local/state/tui-voice/voice.log` (override `TUI_VOICE_LOG_DIR`) |
-| Platform | WSL2 + Windows microphone/speakers |
+| Platform | WSL2 (Windows microphone/speakers) or native Linux (PipeWire/PulseAudio, ALSA fallback) |
 
 Services do not auto-start. The plugin needs the voice service's Python/models and
-Windows ffmpeg available.
+a local `ffmpeg` available.
 
 ## Repository map
 
@@ -58,7 +59,8 @@ Windows ffmpeg available.
 tui.tsx                 OpenCode TUI plugin: footer button, settings dialog, queues
 live_draft.ts           Footer-anchored native composer updates and draft ownership
 live_dictation.py       Single-flight bounded streaming ASR and live hypotheses
-voice_helper.py         Windows mic capture, VAD, Whisper transcription, Kokoro TTS
+voice_helper.py         Local mic capture, VAD, Whisper transcription, Kokoro TTS
+audio_backend.py        Platform audio: ffmpeg, devices, capture argv, playback
 tts_worker.py           Persistent local Kokoro worker (AF_UNIX, no cloud)
 README.md               Product page for users (not documentation)
 INSTALL.md              Install guide: global vs project-local plugin scope
@@ -81,7 +83,7 @@ or treat this setup as a physical disk quota.
 cd ~/repos/tui-voice
 
 # Syntax/helper check
-python3 -m py_compile voice_helper.py tts_worker.py
+python3 -m py_compile audio_backend.py voice_helper.py tts_worker.py
 
 # Plugin discovery
 opencode plugin list
@@ -105,8 +107,9 @@ plugin requires closing and reopening the TUI; `/reload` alone is not sufficient
 - `live_dictation.py` keeps one ASR request in flight, coalesces previews and
   commits bounded phrases while capture continues. `live_draft.ts` revises only
   owned dictated text; edited text is preserved, with `/voice-text` recovery.
-- `voice_helper.py dictate` streams Windows `dshow` audio until explicitly toggled
-  off. Its separate `record` diagnostic remains bounded. Both use local audio.
+- `voice_helper.py dictate` streams platform capture audio (WSL2 `dshow`, Linux
+  `pulse`/`alsa`) until explicitly toggled off. Its separate `record` diagnostic
+  remains bounded. Both use local audio.
 - `tts_worker.py` keeps one Kokoro ONNX session loaded and serves chunks over
   `$XDG_RUNTIME_DIR/tui-voice/tts.sock`. The existing ASR warm worker serves
   Whisper over `$XDG_RUNTIME_DIR/firewatch-asr/asr.sock`.
@@ -140,8 +143,9 @@ plugin requires closing and reopening the TUI; `/reload` alone is not sufficient
   changing its provider, model, or interpreter. Record hardware results honestly;
   source-level checks cannot establish RX 7900 XT acceleration or speed.
 - Read-aloud On speaks a completed assistant reply; Off stays silent.
-- `voice_helper.py devices` lists the real Windows input (Focusrite before the
-  virtual Steam microphone).
+- `voice_helper.py devices` lists real inputs with the automatic selection first:
+  on WSL2 the Focusrite before the virtual Steam microphone; on Linux a hardware
+  source before monitors, StreamMix, and other virtual sources.
 - No audio file remains after transcription; no cloud request is made.
 
 ## Open work and limits

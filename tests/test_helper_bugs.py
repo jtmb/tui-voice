@@ -120,7 +120,7 @@ class HelperBugTests(unittest.TestCase):
 
     def test_playback_failure_leaves_no_audio_file(self):
         stdout, stderr = io.StringIO(), io.StringIO()
-        with patch.object(helper, 'windows_temp', return_value=self.root), \
+        with patch.object(helper, 'scratch_dir', return_value=self.root), \
              patch.object(helper, 'warm_speak', return_value=wav_result()), \
              patch.object(helper, 'play', side_effect=RuntimeError('no audio device')), \
              redirect_stdout(stdout), redirect_stderr(stderr):
@@ -131,7 +131,7 @@ class HelperBugTests(unittest.TestCase):
         self.assertIn('no audio device', stdout.getvalue())
 
     def test_successful_say_also_removes_temp_audio(self):
-        with patch.object(helper, 'windows_temp', return_value=self.root), \
+        with patch.object(helper, 'scratch_dir', return_value=self.root), \
              patch.object(helper, 'warm_speak', return_value=wav_result()), \
              patch.object(helper, 'play'), \
              redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
@@ -208,7 +208,7 @@ class HelperBugTests(unittest.TestCase):
         def fake_play(path):
             played.append(path.name)
 
-        with patch.object(helper, 'windows_temp', return_value=self.root), \
+        with patch.object(helper, 'scratch_dir', return_value=self.root), \
              patch.object(helper, 'warm_speak', side_effect=fake_warm), \
              patch.object(helper, 'play', side_effect=fake_play), \
              redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
@@ -223,7 +223,7 @@ class HelperBugTests(unittest.TestCase):
 
     def test_say_creates_private_progress_directory(self):
         progress = self.root / 'runtime' / 'speech-job.json'
-        with patch.object(helper, 'windows_temp', return_value=self.root), \
+        with patch.object(helper, 'scratch_dir', return_value=self.root), \
              patch.object(helper, 'warm_speak', return_value=wav_result()), \
              patch.object(helper, 'play'), \
              redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
@@ -235,7 +235,7 @@ class HelperBugTests(unittest.TestCase):
 
     def test_say_rejects_markup_only_reply(self):
         stdout = io.StringIO()
-        with patch.object(helper, 'windows_temp', return_value=self.root), \
+        with patch.object(helper, 'scratch_dir', return_value=self.root), \
              patch.object(helper, 'warm_speak') as warm, \
              redirect_stdout(stdout), redirect_stderr(io.StringIO()):
             with self.assertRaises(SystemExit) as failure:
@@ -246,7 +246,7 @@ class HelperBugTests(unittest.TestCase):
 
     def test_say_rejects_exhausted_resume_offset(self):
         stdout = io.StringIO()
-        with patch.object(helper, 'windows_temp', return_value=self.root), \
+        with patch.object(helper, 'scratch_dir', return_value=self.root), \
              patch.object(helper, 'warm_speak') as warm, \
              redirect_stdout(stdout), redirect_stderr(io.StringIO()):
             with self.assertRaises(SystemExit) as failure:

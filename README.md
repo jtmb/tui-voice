@@ -25,7 +25,7 @@
   <a href="https://github.com/jtmb/tui-voice/releases"><img alt="Latest release" src="https://img.shields.io/github/v/release/jtmb/tui-voice?style=flat-square&label=release&color=6E56CF"></a>
   <img alt="Speech stays local" src="https://img.shields.io/badge/speech-100%25%20local-2EA043?style=flat-square">
   <img alt="No cloud, no account" src="https://img.shields.io/badge/cloud-none-2EA043?style=flat-square">
-  <img alt="Platform WSL2" src="https://img.shields.io/badge/platform-WSL2-0078D4?style=flat-square">
+  <img alt="Platform WSL2 and Linux" src="https://img.shields.io/badge/platform-WSL2%20%2B%20Linux-0078D4?style=flat-square">
 </p>
 
 <p align="center">

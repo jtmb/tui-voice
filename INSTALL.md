@@ -26,9 +26,11 @@ the plugin is discovered twice and its footer/commands can appear twice.
 
 | Requirement | Notes |
 | --- | --- |
-| **WSL2** | The supported platform; the microphone and speakers come from Windows. |
+| **WSL2** (primary path) | The microphone and speakers come from Windows. |
+| **Native Linux** | PipeWire, PulseAudio, or ALSA; local microphone and speakers. The system `ffmpeg` is used. |
 | **OpenCode TUI** with TUI plugin support | Verified on v2.2.6. |
-| **Windows `ffmpeg.exe`** with DirectShow | WinGet Gyan.FFmpeg is discovered automatically. |
+| **Windows `ffmpeg.exe`** with DirectShow | WSL2 only. WinGet Gyan.FFmpeg is discovered automatically. |
+| **`ffmpeg`** on `PATH` | Native Linux only. Install the `ffmpeg` package with your package manager. |
 | **Local Whisper/Kokoro stack** | `tui-voice` drives an existing stack; it does not bundle models. Default: `~/repos/fire-tv-next/lulu-launcher/service` with `../voice` beside it. |
 
 No cloud account, API key, or network service is used for speech.
@@ -102,16 +104,23 @@ values that differ, in the environment that launches OpenCode:
 | --- | --- | --- |
 | Speech service | `~/repos/fire-tv-next/lulu-launcher/service` | `TUI_VOICE_SERVICE` |
 | Models and worker runtimes | `voice` beside the service directory | `TUI_VOICE_VOICE_DIR` |
-| Helper interpreter | `.../service/.venv/bin/python` | `TUI_VOICE_PYTHON` |
+| Helper interpreter | `TUI_VOICE_SERVICE` `.venv/bin/python` when it exists, else `python3` | `TUI_VOICE_PYTHON` |
 | Warm Whisper interpreter | `voice/.asr-venv/bin/python` | `TUI_VOICE_ASR_PYTHON` |
 | Warm Kokoro interpreter | `voice/.venv/bin/python` | `TUI_VOICE_TTS_PYTHON` |
-| Windows ffmpeg | Auto-discovered from WinGet / PATH | `TUI_VOICE_FFMPEG` |
+| ffmpeg | WSL2: WinGet Gyan.FFmpeg auto-discovery. Linux: `ffmpeg` on `PATH` | `TUI_VOICE_FFMPEG` |
+| Playback tool | Linux: `pw-play`, `paplay`, `aplay`, then `ffplay` | `TUI_VOICE_PLAYER` |
 | Microphone | Automatic (prefers a real input) | `TUI_VOICE_MIC` |
 | Kokoro backend | `cpu` | `TUI_VOICE_TTS_PROVIDER` |
 | Kokoro model | `kokoro-v1.0.onnx` (FP32) | `TUI_VOICE_TTS_MODEL` |
 
-Set `TUI_VOICE_PYTHON` explicitly when you relocate the service:
-`TUI_VOICE_SERVICE` does not change the TUI's built-in interpreter path.
+`TUI_VOICE_PYTHON` wins. Otherwise the plugin uses
+`<TUI_VOICE_SERVICE>/.venv/bin/python` when that file exists and falls back to
+`python3`, so a relocated service also needs no separate interpreter setting.
+
+`TUI_VOICE_PLAYER` is read on native Linux only. It is split into a command and
+its arguments, and the WAV path is appended as the last argument, for example
+`TUI_VOICE_PLAYER="mpv --no-video"`. Leave it unset to use the detected local
+player.
 
 ## 5. First run
 
