@@ -65,6 +65,7 @@ INSTALL.md              Install guide: global vs project-local plugin scope
 rules.md                Current product contract
 HANDOFF.md              Current state, evidence, open work
 docs/                   Architecture, settings, testing, troubleshooting, runbook
+docs/media/             README logo, product GIF, and its poster still
 ```
 
 ## Common commands

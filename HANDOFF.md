@@ -1,5 +1,40 @@
 # tui-voice handoff
 
+## 2026-11-16 — README product GIF
+
+- Owner asked for a visual GIF built with the `game-readme` approach. The
+  plugin has no game footage, so the product UI itself is the subject: a real
+  OpenCode TUI session (110x32, truecolor, plugin loaded globally) was captured
+  over a pty and replayed into frames.
+- Capture used the existing background service and a throwaway session id; it
+  pressed `ctrl+p`, typed `voice`, closed the palette, opened Voice settings and
+  closed it. No dictation was started, so **no transcript and no listening
+  state** appear — the GIF shows chrome and settings only.
+- `docs/media/gameplay.gif`: 960x531, 8.1 s loop, six held states (idle footer
+  panel with startup toast, command palette, palette filtered to the six
+  `Voice:` commands, composer, Voice settings, closed footer), 136,923 B.
+  `docs/media/gameplay-poster.png` is the settings frame, 81,463 B.
+- README shows the GIF under the badges with a "Real capture" caption. No
+  release was cut for this media commit.
+- Renderer: no `asciinema`/`agg`/`ffmpeg` and no PyPI, so `render_tui.py` parses
+  the emitted CSI/SGR subset into a character grid and draws it with Pillow
+  16.61 px DejaVu Sans Mono (exactly 10 px per cell) plus Noto Color Emoji.
+  Escape sequences that straddle read chunks are carried in a pending buffer;
+  cross-fades were dropped because they produced double-exposure ghosts.
+- Verified: `https://raw.githubusercontent.com/jtmb/tui-voice/main/docs/media/gameplay.gif`
+  returns `content-type: image/gif`, decodes as 6 frames at 960x531 with
+  `loop=0`; README local links and both `<img>` targets resolve; inspected the
+  idle, filtered-palette and settings frames at full size.
+- Tooling stays out of the repository in
+  `/mnt/h/AgentArtifacts/projects/tui-voice/runs/storage-setup-20261114/`
+  (`tools/capture_tui.py`, `tools/render_tui.py`, `tools/render_demo.py`,
+  `test-output/tui-capture.bin` + `-keys.json`). Removed 1,245,850 B of
+  sampled/duplicate frames and the H copies of the published media; artifact
+  charge after cleanup 6,943,608,583 B of 100,000,000,000 B.
+- Not captured, by design: dictation typing into the composer and read-aloud
+  playback. A truthful version needs a real spoken turn the owner is willing to
+  publish.
+
 ## 2026-11-16 — production README and INSTALL guide
 
 - Owner asked for a production, mass-consumption README that is **not**
