@@ -178,6 +178,10 @@ async function prepareDependencies(context: any) {
     const report = await helperPayload(["doctor"], 8000)
     const missing: string[] = report?.required_missing ?? []
     if (!missing.length) return
+    if (report?.auto_install === false) {
+      toast(context, `Missing ${missing.join(", ")}: run python3 voice_helper.py doctor --install`, "warning")
+      return
+    }
     toast(context, `Preparing local audio dependencies (${missing.join(", ")})…`, "info")
     const child = spawn(PYTHON, [HELPER, "doctor", "--install"],
       {detached: true, stdio: "ignore"})

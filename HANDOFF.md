@@ -20,6 +20,14 @@
   `winget` is unavailable. `TUI_VOICE_FFMPEG` now fails loudly when it names a
   missing file instead of being silently ignored.
 - Tests: 112 pass (17 new in `tests/test_platform_deps.py`); `py_compile` clean.
+- Startup check confirmed with fresh TUI clients (pty probe, 110x32, plugin loaded
+  from this checkout): `voice_helper.py doctor` was observed at ~2.0 s after
+  launch and the ready toast rendered, with no dependency toast while ffmpeg is
+  present. With `TUI_VOICE_FFMPEG` pointing at a missing file and
+  `TUI_VOICE_AUTO_INSTALL=0`, the same check ran and the warning toast
+  `Missing ffmpeg: run python3 voice_helper.py doctor --install` appeared; no
+  package manager was invoked. The session running these checks still holds the
+  pre-commit plugin code until it is restarted.
 - Not verified here: a real package installation on Debian/Fedora/Arch/openSUSE/
   Alpine (this host already has ffmpeg, and running apt would change the WSL
   distro), and WinGet installation on Windows. Distribution mapping, command
