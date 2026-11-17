@@ -59,9 +59,12 @@ prints what was resolved and reports `config_error` for a broken/invalid file.
   to `System default input`. If you only see the default, check that PipeWire or
   PulseAudio is running (`pactl info`) and that the device is not muted in
   `pavucontrol`.
-- **`ffmpeg was not found`.** Install the `ffmpeg` package with your system
-  package manager, or set `TUI_VOICE_FFMPEG` to the binary. The plugin never
-  installs packages itself.
+- **`ffmpeg was not found`.** The plugin installs it for the detected OS at
+  startup and retries the capture once. If that could not happen, run
+  `python3 voice_helper.py doctor` to see the OS, manager and missing packages,
+  then `python3 voice_helper.py doctor --install` (needs root or passwordless
+  `sudo`). Set `TUI_VOICE_FFMPEG` to use a build outside the package manager, or
+  `TUI_VOICE_AUTO_INSTALL=0` to stop automatic installs.
 - **PipeWire vs PulseAudio vs ALSA.** PipeWire and PulseAudio both answer `pactl`
   and are used through `-f pulse`. When neither answers, capture uses the ALSA
   `plughw:C,D` devices from `arecord -l`; those are exclusive, so close other

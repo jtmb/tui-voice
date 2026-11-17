@@ -161,6 +161,17 @@ The dialog is a centered `large` OpenCode dialog using
 `theme.surface("dialog")`, a rounded panel, native selected-row colors, and a
 footer with keyboard hints. It is not a full-screen route.
 
+## Dependency bootstrap
+
+`platform_deps.py` reads `/etc/os-release` (WSL2 is detected first) and maps the
+distribution to `apt-get`, `dnf`, `pacman`, `zypper`, `apk` or WinGet. The
+allow-list is small: `ffmpeg` is required, `pactl` and `arecord` only improve
+device names. Installs are argv lists with the manager's non-interactive flags,
+run directly as root or through `sudo -n`; with no privileges the exact command
+is returned instead. `TUI_VOICE_AUTO_INSTALL=0` disables the automatic path.
+`voice_helper.py doctor` prints the same report, and `ffmpeg()` retries once
+after a successful install.
+
 ## Configuration
 
 `voice_config.py` is the single source of truth for stack paths, interpreters and

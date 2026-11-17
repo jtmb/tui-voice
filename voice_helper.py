@@ -25,6 +25,7 @@ import traceback
 import wave
 
 import audio_backend
+import platform_deps
 import voice_config
 from tts_worker import CPU_PROVIDER, requested_provider, startup_timeout, validate_backend
 from live_dictation import FRAME_BYTES, LiveTranscriber
@@ -226,7 +227,18 @@ def ffmpeg():
     try:
         return audio_backend.ffmpeg()
     except audio_backend.AudioBackendError as error:
-        fail(str(error))
+        # A fresh machine may simply not have ffmpeg yet. Install the detected
+        # distribution's package once, then retry before giving up.
+        if platform_deps.auto_install_enabled():
+            report = platform_deps.ensure(install_missing=True)
+            if report.get('ok'):
+                try:
+                    return audio_backend.ffmpeg()
+                except audio_backend.AudioBackendError:
+                    pass
+            log_event('warning', 'automatic dependency install failed',
+                      detail=report.get('error'), missing=report.get('missing'))
+        fail(str(error) + ' Install it with: python3 voice_helper.py doctor --install')
 
 
 def devices():
@@ -1029,6 +1041,11 @@ def main():
     say_parser.add_argument('--start-chunk', type=int, default=0)
     say_parser.add_argument('--progress-file')
 
+    doctor = sub.add_parser('doctor', help='check or install OS audio dependencies')
+    doctor.add_argument('--install', action='store_true',
+                        help='install missing packages for the detected distribution')
+    doctor.add_argument('--all', action='store_true', help='also install optional helpers')
+
     warm_parser = sub.add_parser('warm', help='manage persistent warm ASR/TTS workers')
     warm_parser.add_argument('--start', action='store_true')
     warm_parser.add_argument('--stop', action='store_true')
@@ -1038,6 +1055,14 @@ def main():
     warm_parser.add_argument('--idle-seconds', type=int)
 
     args = parser.parse_args()
+    if args.command == 'doctor':
+        if args.install:
+            report = platform_deps.ensure(install_missing=True,
+                                          include_optional=args.all)
+        else:
+            report = platform_deps.check()
+        output(report, 0 if report.get('ok') else 1)
+
     if args.command == 'warm':
         kinds = ('asr', 'tts') if args.kind == 'both' else (args.kind,)
         if args.status:

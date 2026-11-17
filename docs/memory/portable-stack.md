@@ -37,3 +37,13 @@ Anything that satisfies this contract can be used; the plugin ships no models.
   PipeWire/PulseAudio (`PULSE_SERVER` or the pulse socket, `pactl` optional) with
   ALSA fallback on Linux. `TUI_VOICE_CAPTURE` forces pulse/alsa.
 - `TUI_VOICE_PLAYER` may place `{file}` anywhere in the command.
+
+## Dependency installation
+
+`platform_deps.py` detects the OS family and installs the allow-listed audio
+packages itself: `apt-get` (Debian family), `dnf` (Fedora family), `pacman`
+(Arch family), `zypper` (SUSE), `apk` (Alpine) or WinGet on WSL2. Only `ffmpeg`
+is required; `pactl`/`arecord` are optional. Installs are argv lists, need root
+or passwordless `sudo -n`, and fall back to printing the exact command.
+`TUI_VOICE_AUTO_INSTALL=0` disables it. Do not add package upgrades, third-party
+repositories or anything outside the allow-list to this path.

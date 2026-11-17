@@ -150,7 +150,10 @@ def ffmpeg():
     """Locate ffmpeg for this platform (the system package is named ffmpeg)."""
     configured = voice_config.audio('ffmpeg')
     if PLATFORM == WSL2:
-        if configured and Path(configured).is_file():
+        if configured:
+            if not Path(configured).is_file():
+                raise AudioBackendError(
+                    'TUI_VOICE_FFMPEG does not name an executable: ' + configured)
             return configured
         found = shutil.which('ffmpeg.exe') or _where_exe('ffmpeg.exe')
         if found:

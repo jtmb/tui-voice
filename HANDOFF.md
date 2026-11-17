@@ -1,5 +1,32 @@
 # tui-voice handoff
 
+## 2026-11-17 — OS-aware dependency installation
+
+- Added `platform_deps.py`: reads `/etc/os-release` (WSL2 detected first), maps
+  Debian/Ubuntu/Raspbian, Fedora/RHEL, Arch/Manjaro, openSUSE and Alpine to
+  `apt-get`, `dnf`, `pacman`, `zypper` or `apk`, and checks only `ffmpeg`
+  (required) plus `pactl`/`arecord` (optional, better device names).
+- Installs are argv lists using each manager's non-interactive flags, run as
+  root or through `sudo -n`; without privileges the exact command is returned.
+  A failed first install triggers one metadata refresh and one retry. Nothing
+  outside the allow-list is installed and nothing is upgraded.
+  `TUI_VOICE_AUTO_INSTALL=0` disables the automatic path.
+- `voice_helper.py doctor [--install] [--all]` exposes the report; `ffmpeg()`
+  installs once and retries before failing, so a fresh Debian machine can
+  dictate without reading a package table. The TUI runs `doctor` at setup and
+  starts `doctor --install` in the background only when a required package is
+  missing, with a toast while it runs.
+- WSL2 maps to WinGet (`Gyan.FFmpeg`) and reports the manual build URL when
+  `winget` is unavailable. `TUI_VOICE_FFMPEG` now fails loudly when it names a
+  missing file instead of being silently ignored.
+- Tests: 112 pass (17 new in `tests/test_platform_deps.py`); `py_compile` clean.
+- Not verified here: a real package installation on Debian/Fedora/Arch/openSUSE/
+  Alpine (this host already has ffmpeg, and running apt would change the WSL
+  distro), and WinGet installation on Windows. Distribution mapping, command
+  construction, sudo/manual fallback, auto-install disable and the retry path
+  are covered by hermetic tests.
+- No release was cut.
+
 ## 2026-11-16 — PR #3 review: portable stack, Debian audio
 
 - Reviewed `shakiata`'s PR #3 (`feat/native-linux-audio`, +6671/−135). The

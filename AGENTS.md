@@ -45,7 +45,7 @@ product/UI names here are `tui-voice` / `tui.voice`.
 | Voice directory | `voice` setting: models, `asr-worker.py`, `.asr-venv`, `.venv` |
 | Python | `TUI_VOICE_PYTHON`, then `service/.venv/bin/python`, then `python3` |
 | Warm ASR / TTS Python | `voice/.asr-venv/bin/python` and `voice/.venv/bin/python` |
-| ffmpeg | WSL2: WinGet/`where.exe` discovery. Linux: system `ffmpeg` (override `TUI_VOICE_FFMPEG`) |
+| ffmpeg | Auto-installed for the detected OS (`platform_deps.py`); WSL2 uses WinGet, Linux the distro manager (override `TUI_VOICE_FFMPEG`) |
 | Playback tool | Linux: `pw-play`/`paplay`/`aplay`/`ffplay` auto-detected (override `TUI_VOICE_PLAYER`) |
 | Microphone | Automatic; override `TUI_VOICE_MIC` |
 | Error log | `~/.local/state/tui-voice/voice.log` (override `TUI_VOICE_LOG_DIR`) |
@@ -92,6 +92,9 @@ opencode plugin list
 
 # What the plugin resolved (config file, stack dirs, interpreters)
 python3 voice_config.py --json
+
+# OS dependency report; --install acts on it (needs root or passwordless sudo)
+python3 voice_helper.py doctor
 
 # Local voice helper checks (the helper runs in the stack interpreter)
 python3 voice_helper.py devices

@@ -169,6 +169,25 @@ function prewarmWorkers() {
   } catch {}
 }
 
+// Detect the host OS once per session and install the allow-listed audio
+// packages (ffmpeg and friends) through its own package manager. Disabled with
+// TUI_VOICE_AUTO_INSTALL=0; the helper reports the exact command when it cannot
+// install without privileges.
+async function prepareDependencies(context: any) {
+  try {
+    const report = await helperPayload(["doctor"], 8000)
+    const missing: string[] = report?.required_missing ?? []
+    if (!missing.length) return
+    toast(context, `Preparing local audio dependencies (${missing.join(", ")})…`, "info")
+    const child = spawn(PYTHON, [HELPER, "doctor", "--install"],
+      {detached: true, stdio: "ignore"})
+    child.on("error", () => {})
+    child.unref()
+  } catch (error) {
+    logError("dependency check", error)
+  }
+}
+
 function ownsDictation(turn: DictationTurn) {
   return dictationTurn === turn && !turn.cancelled
 }
@@ -863,6 +882,7 @@ export default Plugin.define({
     onToggle = () => { void toggleVoice(context) }
     onMute = () => { void toggleMute(context) }
     prewarmWorkers()
+    void prepareDependencies(context)
     context.ui.toast.show({title: "tui-voice", message: "Ready · F9 or Ctrl+Alt+V", variant: "info", duration: 3000})
 
     createEffect(() => {

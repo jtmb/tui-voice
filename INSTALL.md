@@ -28,20 +28,37 @@ the plugin is discovered twice and its footer/commands can appear twice.
 | --- | --- |
 | **WSL2 or Linux** | WSL2 uses the Windows microphone and speakers. Any current Linux distribution works; Debian 12+, Ubuntu 22.04+, Fedora and Arch are the tested shapes. |
 | **OpenCode TUI** with TUI plugin support | Verified on v2.2.6. |
-| **ffmpeg** | Debian/Ubuntu: `sudo apt install ffmpeg`. WSL2: a Windows `ffmpeg.exe` with DirectShow, for example WinGet Gyan.FFmpeg. |
+| **ffmpeg** | Installed automatically on first run for the detected OS. WSL2 installs the Windows build with WinGet. |
 | **Local audio server** | Linux: PipeWire or PulseAudio. ALSA is the fallback. Nothing is uploaded. |
 | **Python 3.9+** | Runs the helper. The speech stack's own virtualenv is used when one is configured. |
 | **A local speech stack** | `tui-voice` drives an existing local Whisper/Kokoro stack; it bundles no models and assumes no repository. You point it at your stack in step 4. |
 
 No cloud account, API key, or network service is used for speech.
 
-On Debian, the audio packages are already present on a desktop install. If
-`ffmpeg` is missing:
+### Dependencies are detected and installed for you
+
+The plugin reads `/etc/os-release` (or detects WSL2) and installs only the
+packages it needs, with the distribution's own non-interactive flags:
+
+| Detected OS | Package manager | Packages |
+| --- | --- | --- |
+| Debian, Ubuntu, Raspbian, Mint | `apt-get` | `ffmpeg`, optional `pulseaudio-utils`, `alsa-utils` |
+| Fedora, RHEL, Rocky, Alma | `dnf` | `ffmpeg`, optional `pulseaudio-utils`, `alsa-utils` |
+| Arch, Manjaro, CachyOS | `pacman` | `ffmpeg`, optional `libpulse`, `alsa-utils` |
+| openSUSE | `zypper` | `ffmpeg`, optional `pulseaudio-utils`, `alsa-utils` |
+| Alpine | `apk` | `ffmpeg`, optional `pulseaudio-utils`, `alsa-utils` |
+| WSL2 | WinGet | `Gyan.FFmpeg` (Windows build) |
+
+The check runs at TUI startup and again on the first capture that finds ffmpeg
+missing. It needs root or passwordless `sudo`; when neither is available the
+plugin stops and prints the exact command to run. Nothing else is installed, no
+package is upgraded, and the list above is the whole allow-list.
 
 ```bash
-sudo apt update && sudo apt install ffmpeg
-# optional device listing / playback helpers, detected when present:
-sudo apt install pulseaudio-utils alsa-utils
+python3 voice_helper.py doctor                 # what is detected and missing
+python3 voice_helper.py doctor --install       # install required packages
+python3 voice_helper.py doctor --install --all # also the optional helpers
+TUI_VOICE_AUTO_INSTALL=0                       # disable automatic installs
 ```
 
 ## 3a. Global install
