@@ -8,7 +8,7 @@ function editor(initial = "") {
   return {
     get plainText() { return value },
     isDestroyed: false,
-    hasSelection: () => false,
+    hasSelection: (): boolean => false,
     getClipboardText() { return value },
     editBuffer: {measureText: (text: string) => text.length},
     setSelection(start: number, end: number) { selection = [start, end] },
@@ -22,39 +22,95 @@ function editor(initial = "") {
   }
 }
 
-test("live revisions replace only dictated text and preserve an existing draft and typed suffix", () => {
+test("live revisions replace only dictated text and preserve an existing draft", () => {
   const input = editor("Already typed.")
   const draft = new LiveDraft()
   assert.equal(draft.apply(input, "Turn on"), "written")
-  input.type(" please")
   draft.apply(input, "Turn off the lights.")
   draft.apply(input, "Turn off the lights.")
-  assert.equal(input.plainText, "Already typed. Turn off the lights. please")
+  assert.equal(input.plainText, "Already typed. Turn off the lights.")
 })
 
-test("hidden/recreated composer is not written, manual edits/sends are never overwritten", () => {
+test("typing after the dictated text keeps it, and speech continues after what was typed", () => {
+  const input = editor("Already typed.")
+  const draft = new LiveDraft()
+  draft.apply(input, "Turn on")
+  input.type(" please")
+  draft.apply(input, "Turn on the lights")
+  assert.equal(input.plainText, "Already typed. Turn on please the lights")
+  draft.apply(input, "Turn on the lights and the fan")
+  assert.equal(input.plainText, "Already typed. Turn on please the lights and the fan")
+})
+
+test("typing before the dictated text keeps revising it in place", () => {
+  const input = editor()
+  const draft = new LiveDraft()
+  draft.apply(input, "I want to describe")
+  input.edit("FIX I want to describe")
+  draft.apply(input, "I want to describe the page")
+  draft.apply(input, "I want to describe the page today")
+  assert.equal(input.plainText, "FIX I want to describe the page today")
+})
+
+test("fixing a word inside dictated text never stops dictation", () => {
+  const input = editor()
+  const draft = new LiveDraft()
+  draft.apply(input, "I want to describe")
+  input.edit("I wanted to describe")
+  assert.equal(draft.apply(input, "I want to describe the new page"), "written")
+  assert.equal(input.plainText, "I wanted to describe the new page")
+  draft.apply(input, "I want to describe the new page today")
+  assert.equal(input.plainText, "I wanted to describe the new page today")
+})
+
+test("repeated edits keep handing over without repeating words", () => {
+  const input = editor()
+  const draft = new LiveDraft()
+  draft.apply(input, "one two")
+  input.edit("1 two")
+  draft.apply(input, "one two three four")
+  input.edit("1 two three 4")
+  draft.apply(input, "one two three four five six")
+  assert.equal(input.plainText, "1 two three 4 five six")
+})
+
+test("a sent or cleared draft is not resurrected, but later speech still arrives", () => {
+  const input = editor()
+  const draft = new LiveDraft()
+  draft.apply(input, "live")
+  input.edit("")
+  draft.apply(input, "live")
+  assert.equal(input.plainText, "")
+  draft.apply(input, "live more words")
+  assert.equal(input.plainText, "more words")
+})
+
+test("a hidden composer or an open selection is not written", () => {
   const input = editor()
   const draft = new LiveDraft()
   assert.equal(draft.apply(null, "queued"), "blocked")
   draft.apply(input, "live")
-  assert.equal(draft.apply(editor(), "not this chat"), "blocked")
-  input.edit("I edited this")
-  assert.equal(draft.apply(input, "final transcription"), "edited")
-  assert.equal(input.plainText, "I edited this")
-  input.edit("")
-  assert.equal(draft.apply(input, "must not resurrect a sent draft"), "edited")
-  assert.equal(input.plainText, "")
+  input.hasSelection = () => true
+  assert.equal(draft.apply(input, "live text"), "blocked")
+  assert.equal(input.plainText, "live")
+  input.hasSelection = () => false
+  draft.apply(input, "live text")
+  assert.equal(input.plainText, "live text")
+  assert.equal(draft.apply(editor(), "other composer"), "blocked")
 })
 
-test("a remounted composer resumes only when the owned draft was preserved", () => {
+test("a remounted composer resumes with the preserved draft or continues after a replaced one", () => {
   const old = editor("prefix")
   const draft = new LiveDraft()
   draft.apply(old, "live")
   old.isDestroyed = true
-  assert.equal(draft.apply(editor("unrelated"), "final"), "blocked")
   const restored = editor(old.plainText)
-  assert.equal(draft.apply(restored, "final"), "written")
-  assert.equal(restored.plainText, "prefix final")
+  assert.equal(draft.apply(restored, "live final"), "written")
+  assert.equal(restored.plainText, "prefix live final")
+  restored.isDestroyed = true
+  const replaced = editor("unrelated")
+  draft.apply(replaced, "live final words")
+  assert.equal(replaced.plainText, "unrelated words")
 })
 
 test("footer-anchored lookup excludes unrelated dialog editors and fails closed on ambiguity", () => {

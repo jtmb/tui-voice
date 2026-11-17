@@ -181,8 +181,10 @@ tools/artifact_env.py --reserve-bytes 2000000 -- \
 
 `tests/live_draft.test.ts` uses Node's built-in test runner after bundling with
 the existing esbuild; output belongs under `$TUI_VOICE_BUILD_DIR`. It checks
-revision replacement, existing drafts and typed suffixes, remounts, manual-edit
-protection, footer lookup and split JSON transport. `tests/native_draft_probe.ts`
+revision replacement, existing drafts, typing before/inside/after the dictated
+text without ever stopping dictation, sent drafts not resurrected, remounts,
+footer lookup and split JSON transport. `tests/tui_sim/drive.py` reproduces the
+same editing patterns in a real TUI with a fake helper (see its docstring). `tests/native_draft_probe.ts`
 can be bundled as a temporary TUI-only package and loaded in an exclusively
 task-owned TUI using `OPENCODE_CLI_CONFIG_CONTENT`. Set
 `TUI_VOICE_NATIVE_RECEIPT` to an H output file; it checks the real host textarea,
@@ -193,7 +195,8 @@ Manual checks still needed for the owner's room:
 - Speak continuously, pause for several seconds, then speak again. The microphone
   must stay on until explicitly toggled off, including beyond the old 60-s limit.
 - Start with an existing draft; ensure it is kept and live phrases aren't repeated.
-- Edit dictated text mid-turn; it must not be overwritten. `/voice-text` explicitly
+- Edit dictated text mid-turn; your edit must stay and dictation must keep going
+  after it. `/voice-text` explicitly
   recovers the complete transcript in the same chat (can duplicate retained text).
 - Dictate during an assistant reply; recognition continues and the held transcript
   appears when that chat's composer returns. Switching chats must not leak text.

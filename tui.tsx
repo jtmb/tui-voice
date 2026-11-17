@@ -320,11 +320,8 @@ async function flushPending(context: any) {
     while (pendingDrafts.length && Date.now() < end) {
       for (const draft of [...pendingDrafts]) {
         const result = writeDraft(context, draft)
-        if (result === "edited" || (result === "written" && draft.final)) {
+        if (result === "written" && draft.final) {
           pendingDrafts = pendingDrafts.filter(item => item !== draft)
-          if (result === "edited") {
-            toast(context, "Draft edited; voice won't overwrite it. Use /voice-text to recover the transcript.", "warning")
-          }
         }
       }
       await delay(150)
@@ -335,7 +332,6 @@ async function flushPending(context: any) {
 }
 
 function queueDraft(context: any, draft: Draft) {
-  if (draft.writer.edited) return
   if (!pendingDrafts.includes(draft)) pendingDrafts.push(draft)
   void flushPending(context)
 }

@@ -39,6 +39,10 @@ requirements remain.
   and transcribe everything recorded so far. It must not drop the audio or force
   the user to wait for another silence.
 - Never send the prompt automatically. The user reviews and sends it.
+- Editing the message box while dictating must never stop dictation. Text the user
+  types or fixes, before, inside or after the dictated words, is kept; speech
+  continues after it with only the words not yet shown, and the final transcript
+  still arrives when the mic is turned off.
 - Show local recognition in the message box while the user speaks, not only after
   recording stops. Revise the live phrase without duplicating it or overwriting
   manual draft edits. Keep capture independent of ASR latency and requests bounded.
