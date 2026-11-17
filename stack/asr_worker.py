@@ -24,8 +24,23 @@ import time
 MAX_FRAME = 16 * 1024 * 1024
 MAX_RESPONSE = 16 * 1024 * 1024
 START_TIMEOUT = 45.0
-DEFAULT_THREADS = 8
 MAX_THREADS = 8
+
+
+def _default_threads():
+    """Match physical cores (logical CPUs / 2), capped at MAX_THREADS.
+
+    Keeps a standalone worker from oversubscribing low-core machines when it
+    is started without an explicit --threads argument.
+    """
+    try:
+        available = len(os.sched_getaffinity(0))
+    except AttributeError:
+        available = os.cpu_count() or 4
+    return max(1, min(MAX_THREADS, available // 2 or 1))
+
+
+DEFAULT_THREADS = _default_threads()
 VOICE_DIR = Path(os.environ.get('TUI_VOICE_VOICE_DIR') or Path(__file__).resolve().parent)
 MODEL_DIR = Path(os.environ.get('TUI_VOICE_ASR_MODEL') or (VOICE_DIR / 'models/whisper-base.en'))
 ENGINE = 'Whisper base.en / faster-whisper / CPU int8 (local)'

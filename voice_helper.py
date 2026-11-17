@@ -50,6 +50,22 @@ def _bounded_env_int(name, default, maximum):
     return max(1, min(value, maximum))
 
 
+def _default_asr_threads():
+    """Default ctranslate2 threads to the machine's physical core count.
+
+    os.cpu_count() reports logical CPUs, which is typically twice the physical
+    core count on SMT machines. Using the logical count oversubscribes small
+    CPUs: on a 2-core/4-thread i5-6200U the same 11s transcript took ~4.4s with
+    8 threads and ~2.4s with 2. An explicit TUI_VOICE_ASR_THREADS still wins;
+    this only changes the fallback. Capped at 8, the ASR worker's CLI maximum.
+    """
+    try:
+        available = len(os.sched_getaffinity(0))
+    except AttributeError:
+        available = os.cpu_count() or 4
+    return max(1, min(8, available // 2 or 1))
+
+
 def _env_seconds(name, default):
     try:
         return max(0, int(os.environ.get(name, str(default))))
@@ -61,7 +77,7 @@ WARM_IDLE = _env_seconds('TUI_VOICE_WARM_IDLE', 1800)
 
 # asr-worker.py accepts 1..8 and tts_worker.py accepts 1..24. An out-of-range
 # override otherwise makes every start die with a bare argparse status 2.
-ASR_THREADS = _bounded_env_int('TUI_VOICE_ASR_THREADS', 8, 8)
+ASR_THREADS = _bounded_env_int('TUI_VOICE_ASR_THREADS', _default_asr_threads(), 8)
 TTS_THREADS = _bounded_env_int('TUI_VOICE_TTS_THREADS', 8, 24)
 CMD = audio_backend.windows_cmd()
 WINDOWS_CWD = str(Path(CMD).parent) if Path(CMD).is_absolute() else '/'
