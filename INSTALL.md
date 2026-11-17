@@ -26,14 +26,23 @@ the plugin is discovered twice and its footer/commands can appear twice.
 
 | Requirement | Notes |
 | --- | --- |
-| **WSL2** (primary path) | The microphone and speakers come from Windows. |
-| **Native Linux** | PipeWire, PulseAudio, or ALSA; local microphone and speakers. The system `ffmpeg` is used. |
+| **WSL2 or Linux** | WSL2 uses the Windows microphone and speakers. Any current Linux distribution works; Debian 12+, Ubuntu 22.04+, Fedora and Arch are the tested shapes. |
 | **OpenCode TUI** with TUI plugin support | Verified on v2.2.6. |
-| **Windows `ffmpeg.exe`** with DirectShow | WSL2 only. WinGet Gyan.FFmpeg is discovered automatically. |
-| **`ffmpeg`** on `PATH` | Native Linux only. Install the `ffmpeg` package with your package manager. |
-| **Local Whisper/Kokoro stack** | `tui-voice` drives an existing stack; it does not bundle models. Default: `~/repos/fire-tv-next/lulu-launcher/service` with `../voice` beside it. |
+| **ffmpeg** | Debian/Ubuntu: `sudo apt install ffmpeg`. WSL2: a Windows `ffmpeg.exe` with DirectShow, for example WinGet Gyan.FFmpeg. |
+| **Local audio server** | Linux: PipeWire or PulseAudio. ALSA is the fallback. Nothing is uploaded. |
+| **Python 3.9+** | Runs the helper. The speech stack's own virtualenv is used when one is configured. |
+| **A local speech stack** | `tui-voice` drives an existing local Whisper/Kokoro stack; it bundles no models and assumes no repository. You point it at your stack in step 4. |
 
 No cloud account, API key, or network service is used for speech.
+
+On Debian, the audio packages are already present on a desktop install. If
+`ffmpeg` is missing:
+
+```bash
+sudo apt update && sudo apt install ffmpeg
+# optional device listing / playback helpers, detected when present:
+sudo apt install pulseaudio-utils alsa-utils
+```
 
 ## 3a. Global install
 
@@ -97,30 +106,70 @@ lives at the same path on every machine that uses the project.
 
 ## 4. Point it at your speech stack
 
-The defaults work when the local stack is in its usual place. Override only the
-values that differ, in the environment that launches OpenCode:
+`tui-voice` does not ship models and does not assume any particular checkout.
+It needs two directories from your local stack:
 
-| Dependency | Default | Override |
+| Setting | What it must provide |
+| --- | --- |
+| `service` | A directory on `PYTHONPATH` with `web_voice.py` exposing `WebVoice`, plus an optional `.venv/bin/python`. |
+| `voice` | The models directory plus the `asr-worker.py` script, `.asr-venv/bin/python`, `.venv/bin/python` and `neural-models.json`. |
+
+Create `~/.config/tui-voice/config.json` (or
+`$XDG_CONFIG_HOME/tui-voice/config.json`):
+
+```json
+{
+  "service": "/srv/speech/service",
+  "voice": "/srv/speech/voice"
+}
+```
+
+```bash
+mkdir -p ~/.config/tui-voice
+chmod 700 ~/.config/tui-voice
+$EDITOR ~/.config/tui-voice/config.json
+```
+
+Environment variables override the file. When neither is set, the plugin looks
+in its own data directory, `~/.local/share/tui-voice/service` and
+`~/.local/share/tui-voice/voice` (or `$XDG_DATA_HOME`), so you can also symlink
+a stack there instead of writing a config file.
+
+| Setting | Environment variable | Default |
 | --- | --- | --- |
-| Speech service | `~/repos/fire-tv-next/lulu-launcher/service` | `TUI_VOICE_SERVICE` |
-| Models and worker runtimes | `voice` beside the service directory | `TUI_VOICE_VOICE_DIR` |
-| Helper interpreter | `TUI_VOICE_SERVICE` `.venv/bin/python` when it exists, else `python3` | `TUI_VOICE_PYTHON` |
-| Warm Whisper interpreter | `voice/.asr-venv/bin/python` | `TUI_VOICE_ASR_PYTHON` |
-| Warm Kokoro interpreter | `voice/.venv/bin/python` | `TUI_VOICE_TTS_PYTHON` |
-| ffmpeg | WSL2: WinGet Gyan.FFmpeg auto-discovery. Linux: `ffmpeg` on `PATH` | `TUI_VOICE_FFMPEG` |
-| Playback tool | Linux: `pw-play`, `paplay`, `aplay`, then `ffplay` | `TUI_VOICE_PLAYER` |
-| Microphone | Automatic (prefers a real input) | `TUI_VOICE_MIC` |
-| Kokoro backend | `cpu` | `TUI_VOICE_TTS_PROVIDER` |
-| Kokoro model | `kokoro-v1.0.onnx` (FP32) | `TUI_VOICE_TTS_MODEL` |
+| Speech service directory | `TUI_VOICE_SERVICE` | `~/.local/share/tui-voice/service` |
+| Models and worker runtimes | `TUI_VOICE_VOICE_DIR` | `~/.local/share/tui-voice/voice` |
+| Config file | `TUI_VOICE_CONFIG` | `~/.config/tui-voice/config.json` |
+| Helper interpreter | `TUI_VOICE_PYTHON` | `service/.venv/bin/python`, else `python3` |
+| Warm Whisper interpreter | `TUI_VOICE_ASR_PYTHON` | `voice/.asr-venv/bin/python` |
+| Warm Kokoro interpreter | `TUI_VOICE_TTS_PYTHON` | `voice/.venv/bin/python` |
+| ffmpeg | `TUI_VOICE_FFMPEG` | WSL2: WinGet / `where.exe`. Linux: `ffmpeg` on `PATH` |
+| Playback tool | `TUI_VOICE_PLAYER` | Linux: `pw-play`, `paplay`, `aplay`, `ffplay` |
+| Capture backend | `TUI_VOICE_CAPTURE` | `pulse` when a server is reachable, otherwise `alsa` |
+| Microphone | `TUI_VOICE_MIC` | Automatic; prefers a real hardware input |
+| Kokoro backend | `TUI_VOICE_TTS_PROVIDER` | `cpu` |
+| Kokoro model | `TUI_VOICE_TTS_MODEL` | `kokoro-v1.0.onnx` (FP32) |
+| WSL interop tools | `TUI_VOICE_CMD`, `TUI_VOICE_POWERSHELL` | Discovered from the live Windows install |
 
-`TUI_VOICE_PYTHON` wins. Otherwise the plugin uses
-`<TUI_VOICE_SERVICE>/.venv/bin/python` when that file exists and falls back to
-`python3`, so a relocated service also needs no separate interpreter setting.
+Check what the plugin resolved before starting the TUI:
 
-`TUI_VOICE_PLAYER` is read on native Linux only. It is split into a command and
-its arguments, and the WAV path is appended as the last argument, for example
-`TUI_VOICE_PLAYER="mpv --no-video"`. Leave it unset to use the detected local
-player.
+```bash
+python3 voice_config.py --json
+```
+
+It prints both directories, the interpreters it will use, any audio overrides,
+and `config_error` when the config file is unreadable.
+
+`TUI_VOICE_PLAYER` is split into a command and its arguments. The WAV path is
+appended last, or substituted for `{file}` anywhere in the command:
+
+```bash
+TUI_VOICE_PLAYER="mpv --no-video"          # mpv --no-video <wav>
+TUI_VOICE_PLAYER="mpv {file} --no-video"   # mpv <wav> --no-video
+```
+
+Any player you choose must block until playback finishes, so stopping read-aloud
+can stop it. Leave it unset to use the detected local player.
 
 ## 5. First run
 
@@ -141,6 +190,10 @@ Review the draft and send it yourself; **nothing is sent automatically**.
 
 ## 6. Verify
 
+- `python3 voice_config.py --json` shows both stack directories, no
+  `config_error`, and the interpreters you expect.
+- `python3 voice_helper.py devices` lists your inputs; the first one is the
+  automatic choice.
 - `opencode plugin list` shows the checkout (global) or
   `.opencode/plugins/tui-voice` (local).
 - A fresh TUI shows the rounded footer panel.

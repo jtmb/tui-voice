@@ -12,10 +12,19 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import audio_backend as backend
+import voice_config
 
 
 def completed(stdout='', returncode=0, stderr=''):
     return SimpleNamespace(returncode=returncode, stdout=stdout, stderr=stderr)
+
+
+def isolate_config(test):
+    """Never read the developer's real config file in a hermetic test."""
+    patcher = patch.object(voice_config, 'config_path',
+                           lambda environ=None: Path('/nonexistent/tui-voice/config.json'))
+    patcher.start()
+    test.addCleanup(patcher.stop)
 
 
 PULSE_SOURCES = [
@@ -67,6 +76,7 @@ class LinuxDeviceTests(unittest.TestCase):
         platform = patch.object(backend, 'PLATFORM', backend.LINUX)
         platform.start()
         self.addCleanup(platform.stop)
+        isolate_config(self)
 
     def pulse(self, payload=None, default=None):
         text = json.dumps(PULSE_SOURCES if payload is None else payload)
@@ -204,6 +214,9 @@ class LinuxDeviceTests(unittest.TestCase):
 
 
 class CaptureArgumentTests(unittest.TestCase):
+    def setUp(self):
+        isolate_config(self)
+
     def test_wsl_dshow_arguments_are_unchanged(self):
         with patch.object(backend, 'PLATFORM', backend.WSL2):
             self.assertEqual(backend.capture_args('Focusrite Analog'),
@@ -217,15 +230,19 @@ class CaptureArgumentTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             binary = Path(directory) / 'ffmpeg.exe'
             binary.write_text('')
+            shell = Path(directory) / 'powershell.exe'
+            shell.write_text('')
             with patch.object(backend, 'PLATFORM', backend.WSL2), \
                  patch.dict(os.environ, {'TUI_VOICE_FFMPEG': str(binary)}):
                 self.assertEqual(backend.ffmpeg(), str(binary))
             with patch.object(backend, 'PLATFORM', backend.WSL2), \
+                 patch.dict(os.environ, {'TUI_VOICE_POWERSHELL': str(shell)}), \
                  patch.object(backend.subprocess, 'run',
                               return_value=completed('C:\\Temp\\tui-voice.wav')):
                 self.assertEqual(backend.output_path('/mnt/c/Temp/tui-voice.wav'),
                                  'C:\\Temp\\tui-voice.wav')
                 command = backend.playback_command('/mnt/c/Temp/tui-voice.wav')
+            self.assertEqual(command[0], str(shell))
             self.assertIn('PlaySync()', command[-1])
             self.assertIn('C:\\Temp\\tui-voice.wav', command[-1])
 
@@ -244,6 +261,45 @@ class CaptureArgumentTests(unittest.TestCase):
         with patch.object(backend, 'PLATFORM', backend.LINUX):
             self.assertEqual(backend.output_path('/tmp/opencode/a.wav'), '/tmp/opencode/a.wav')
 
+    def test_capture_backend_can_be_forced(self):
+        with patch.object(backend, 'PLATFORM', backend.LINUX), \
+             patch.object(backend.subprocess, 'run', return_value=completed('', 1)), \
+             patch.dict(os.environ, {'TUI_VOICE_CAPTURE': 'alsa'}):
+            self.assertEqual(backend.capture_args('default'), ['-f', 'alsa', '-i', 'default'])
+        with patch.object(backend, 'PLATFORM', backend.LINUX), \
+             patch.object(backend.subprocess, 'run', return_value=completed('', 1)), \
+             patch.object(backend, '_pulse_reachable', return_value=False), \
+             patch.dict(os.environ, {'TUI_VOICE_CAPTURE': 'nonsense'}):
+            self.assertEqual(backend.capture_args('default'), ['-f', 'alsa', '-i', 'default'])
+
+    def test_windows_paths_are_translated_without_a_fixed_drive(self):
+        self.assertEqual(backend._windows_to_wsl('C:\\Users\\A\\Temp'),
+                         '/mnt/c/Users/A/Temp')
+        self.assertEqual(backend._windows_to_wsl('D:\\media\\a.wav'),
+                         '/mnt/d/media/a.wav')
+        self.assertIsNone(backend._windows_to_wsl('relative/path'))
+
+    def test_wsl_ffmpeg_uses_where_exe_without_hardcoded_profiles(self):
+        with patch.object(backend, 'PLATFORM', backend.WSL2), \
+             patch.object(backend.shutil, 'which', return_value=None), \
+             patch.object(backend, '_where_exe',
+                          return_value='/mnt/d/ffmpeg/bin/ffmpeg.exe') as where, \
+             patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(backend.ffmpeg(), '/mnt/d/ffmpeg/bin/ffmpeg.exe')
+            where.assert_called_once_with('ffmpeg.exe')
+
+    def test_powershell_override_reaches_playback(self):
+        with tempfile.TemporaryDirectory() as directory:
+            binary = Path(directory) / 'powershell.exe'
+            binary.write_text('')
+            with patch.object(backend, 'PLATFORM', backend.WSL2), \
+                 patch.object(backend, 'output_path', return_value='C:\\Temp\\a.wav'), \
+                 patch.dict(os.environ, {'TUI_VOICE_POWERSHELL': str(binary)}):
+                command = backend.playback_command('/tmp/opencode/a.wav')
+            self.assertEqual(command[0], str(binary))
+            self.assertIn('PlaySync()', command[-1])
+            self.assertIn('C:\\Temp\\a.wav', command[-1])
+
 
 class PlaybackTests(unittest.TestCase):
     def setUp(self):
@@ -256,6 +312,7 @@ class PlaybackTests(unittest.TestCase):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
         self.runtime = Path(self.directory.name)
+        isolate_config(self)
 
     def player(self, names, pactl=True, pipewire=True):
         def which(name):
@@ -284,6 +341,19 @@ class PlaybackTests(unittest.TestCase):
         command = self.command({'TUI_VOICE_PLAYER': 'mpv --no-video'}, set())
         self.assertEqual(command, ['mpv', '--no-video', '/tmp/opencode/reply.wav'])
 
+    def test_player_placeholder_can_appear_anywhere(self):
+        command = self.command(
+            {'TUI_VOICE_PLAYER': 'cvlc --play-and-exit {file} --quiet'}, set())
+        self.assertEqual(command,
+                         ['cvlc', '--play-and-exit', '/tmp/opencode/reply.wav', '--quiet'])
+
+    def test_pulse_socket_enables_paplay_without_pactl(self):
+        (self.runtime / 'pulse').mkdir()
+        (self.runtime / 'pulse/native').touch()
+        command = self.command({'XDG_RUNTIME_DIR': str(self.runtime)}, {'paplay'},
+                               pactl=False, pipewire=False)
+        self.assertEqual(command, ['paplay', '/tmp/opencode/reply.wav'])
+
     def test_pipewire_player_is_preferred_when_socket_exists(self):
         command = self.command({'XDG_RUNTIME_DIR': str(self.runtime)},
                                {'pw-play', 'paplay', 'aplay'})
@@ -308,6 +378,9 @@ class PlaybackTests(unittest.TestCase):
 
 
 class ScratchDirectoryTests(unittest.TestCase):
+    def setUp(self):
+        isolate_config(self)
+
     def test_runtime_directory_is_private(self):
         with tempfile.TemporaryDirectory() as directory:
             path = backend.scratch_dir({'XDG_RUNTIME_DIR': directory})

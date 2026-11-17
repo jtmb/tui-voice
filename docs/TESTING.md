@@ -16,50 +16,48 @@ Reuse these checks; do not build recursive test infrastructure for this plugin.
 ```bash
 cd ~/repos/tui-voice
 
-python3 -m py_compile voice_helper.py tts_worker.py
+python3 -m py_compile voice_config.py audio_backend.py voice_helper.py tts_worker.py
+python3 voice_config.py --json
 
-SERVICE=~/repos/fire-tv-next/lulu-launcher/service
-$SERVICE/.venv/bin/python voice_helper.py devices
+PY=$(python3 voice_config.py --python)
+$PY voice_helper.py devices
 
-$SERVICE/.venv/bin/python voice_helper.py warm --start
-$SERVICE/.venv/bin/python voice_helper.py warm --status
-
-$SERVICE/.venv/bin/python voice_helper.py transcribe \
-  --wav ~/repos/fire-tv-next/lulu-launcher/voice/fixtures/short-2s.wav
+$PY voice_helper.py record --seconds 3 --silence 0 --out /tmp/opencode/check.wav
+$PY voice_helper.py warm --start
+$PY voice_helper.py warm --status
+$PY voice_helper.py transcribe --wav /tmp/opencode/check.wav
 ```
 
 Expected:
 
-- `devices` lists the real Windows input first (Focusrite Analogue 1 + 2) and the
-  virtual Steam microphone second.
-- `warm --status` reports an `asr` worker on CPU and a `tts` worker with the four
-  local voices.
-- `transcribe` returns “Turn on the living room lights.” with confidence around
-  0.93. With the warm worker it completes in about half a second.
+- `voice_config.py --json` shows both configured directories, the interpreters in
+  use and no `config_error`.
+- `devices` lists real inputs; the first entry is the automatic choice.
+- `warm --status` reports an `asr` worker on CPU and a `tts` worker with the local
+  voices.
+- `transcribe` returns the words you just recorded. With the warm worker it
+  completes in about half a second.
 
 ## Long-turn and log checks
 
-Build a recording longer than 32 s by repeating two different fixtures, then
-transcribe it:
+Build a recording longer than 32 s from the clip above, then transcribe it:
 
 ```bash
+PY=$(python3 voice_config.py --python)
 python3 - <<'PY'
 import wave
 from pathlib import Path
-base = Path.home()/'repos/fire-tv-next/lulu-launcher/voice/fixtures'
+source = Path('/tmp/opencode/check.wav')
 out = Path('/tmp/opencode/long-turn.wav')
-parts = []
-for name in ('long-12s', 'medium-4s', 'short-2s',
-             'long-12s', 'medium-4s', 'short-2s', 'long-12s'):
-    with wave.open(str(base/(name + '.wav')), 'rb') as wav:
-        params = wav.getparams()
-        parts.append(wav.readframes(wav.getnframes()))
+with wave.open(str(source), 'rb') as wav:
+    params = wav.getparams()
+    frames = wav.readframes(wav.getnframes())
 with wave.open(str(out), 'wb') as wav:
     wav.setparams(params)
-    for frames in parts:
+    for _ in range(8):
         wav.writeframes(frames)
 PY
-$SERVICE/.venv/bin/python voice_helper.py transcribe --wav /tmp/opencode/long-turn.wav
+$PY voice_helper.py transcribe --wav /tmp/opencode/long-turn.wav
 ```
 
 Expected: a transcript with `"chunks": 2` (or more), no “Audio duration outside
@@ -69,7 +67,7 @@ Feed a corrupt WAV to confirm failures are logged, not only toasted:
 
 ```bash
 head -c 200 /dev/urandom > /tmp/opencode/bad.wav
-$SERVICE/.venv/bin/python voice_helper.py transcribe --wav /tmp/opencode/bad.wav
+$PY voice_helper.py transcribe --wav /tmp/opencode/bad.wav
 tail -1 ~/.local/state/tui-voice/voice.log
 ```
 
@@ -77,17 +75,17 @@ tail -1 ~/.local/state/tui-voice/voice.log
 
 ```bash
 cd ~/repos/tui-voice
-SERVICE=~/repos/fire-tv-next/lulu-launcher/service
+PY=$(python3 voice_config.py --python)
 
 # Status must answer even while speech is synthesizing.
-$SERVICE/.venv/bin/python voice_helper.py say \
+$PY voice_helper.py say \
   --text "This is a warm local speech test." --no-play
-$SERVICE/.venv/bin/python voice_helper.py warm --status
+$PY voice_helper.py warm --status
 
 # Stop and confirm the cold fallback still works, then start again.
-$SERVICE/.venv/bin/python voice_helper.py warm --stop
-$SERVICE/.venv/bin/python voice_helper.py say --text "Cold fallback." --no-play
-$SERVICE/.venv/bin/python voice_helper.py warm --start
+$PY voice_helper.py warm --stop
+$PY voice_helper.py say --text "Cold fallback." --no-play
+$PY voice_helper.py warm --start
 ```
 
 Expected: `say` reports `"warm_chunks": 1` with a worker running and `0` after
@@ -103,8 +101,8 @@ provider name in a list, does not pass this gate.
 
 ```bash
 cd ~/repos/tui-voice
-VOICE=~/repos/fire-tv-next/lulu-launcher/voice
-export TUI_VOICE_TTS_PYTHON="$VOICE/.venv/bin/python"
+PY=$(python3 voice_config.py --python)
+export TUI_VOICE_TTS_PYTHON="$(python3 voice_config.py --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["tts_python"])')"
 
 # 1. The runtime must see the GPU instead of crashing.
 rocminfo | grep -m1 gfx
@@ -113,9 +111,9 @@ rocminfo | grep -m1 gfx
 TUI_VOICE_TTS_PROVIDER=migraphx "$TUI_VOICE_TTS_PYTHON" tts_worker.py --check
 
 # 3. Real worker and real speech.
-TUI_VOICE_TTS_PROVIDER=migraphx python3 voice_helper.py warm --restart --kind tts
+TUI_VOICE_TTS_PROVIDER=migraphx "$PY" voice_helper.py warm --restart --kind tts
 python3 voice_helper.py warm --status
-TUI_VOICE_TTS_PROVIDER=migraphx python3 voice_helper.py say \
+TUI_VOICE_TTS_PROVIDER=migraphx "$PY" voice_helper.py say \
   --text "Read aloud is using the local AMD GPU." --voice heart --no-play
 ```
 
@@ -146,7 +144,7 @@ Measured on 2026-11-12, the gate **failed before ONNX Runtime built a session**:
 Close the current TUI completely and start a new one from outside the repository
 (`cd ~`). `/reload` is not enough after a plugin path change.
 
-1. `opencode plugin list` includes `/home/brajam/repos/tui-voice`.
+1. `opencode plugin list` includes this checkout.
 2. From the home screen, press `F9`/the mic. It must create a session and start
    recording instead of showing "Open a chat session first."
 3. Press the mic again while listening. It must gracefully stop at that point and
@@ -229,7 +227,7 @@ bridge restored capture. No WSL/service restart or permission change was used.
   `--start-chunk` and incremented the warm worker request count.
 - Historical bounded `record` diagnostic: silence auto-stop stopped a synthetic
   recording after speech. Interactive `dictate` no longer uses this behavior.
-- Global load verified from `/home/brajam`, not from this repository.
+- Global load verified from a directory outside this repository.
 - Dictation fixtures on 2026-11-12: `short-2s.wav` returned
   `Turn on the living room lights.` (confidence 0.9322); a 37 s synthetic turn
   returned `"chunks": 2`; a corrupt WAV returned a clear error and appended an

@@ -2,8 +2,8 @@
 
 ## Plugin is missing or looks stale
 
-- Confirm `~/.config/opencode/cli.json` contains
-  `/home/brajam/repos/tui-voice`.
+- Confirm `~/.config/opencode/cli.json` contains the absolute path of this
+  checkout (run `pwd` in the repository).
 - Run `opencode plugin list`.
 - A TUI-only plugin added or moved on disk is not picked up by `/reload` alone.
   **Close the TUI completely and reopen it.**
@@ -34,8 +34,23 @@ Do not move it to the composer, a dialog, or an overlay.
    input.
 4. Lower **Speech threshold** or raise gain for quiet words. Recording is manual
    on/off; no pause or maximum-turn setting should stop it.
-5. Confirm the local service still has the Whisper model and Python environment:
-   `~/repos/fire-tv-next/lulu-launcher/service`.
+5. Confirm your speech stack is still where the plugin expects it:
+   `python3 voice_config.py --json` prints both directories, the interpreters,
+   and `config_error` when the config file is unreadable.
+
+## "No local speech stack at ..."
+
+`tui-voice` drives an external local stack and bundles no models. Point it at
+yours in `~/.config/tui-voice/config.json`:
+
+```json
+{"service": "/path/to/service", "voice": "/path/to/voice"}
+```
+
+or set `TUI_VOICE_SERVICE` and `TUI_VOICE_VOICE_DIR`. The `service` directory
+must provide `web_voice.py`; the `voice` directory holds `asr-worker.py`, the
+worker virtualenvs, and `neural-models.json`. `python3 voice_config.py --json`
+prints what was resolved and reports `config_error` for a broken/invalid file.
 
 ## Native Linux audio
 
@@ -59,10 +74,14 @@ Do not move it to the composer, a dialog, or an overlay.
   Settings → Input**, or set `TUI_VOICE_MIC` to a device description or raw source
   id, to override it.
 - **Playback uses the wrong device or fails.** Playback tries `pw-play` (when
-  `$XDG_RUNTIME_DIR/pipewire-0` exists), then `paplay` (when `pactl info` works),
-  then `aplay`, then `ffplay`. Override it with `TUI_VOICE_PLAYER`, for example
-  `TUI_VOICE_PLAYER="mpv --no-video"`; the WAV path is appended as the last
-  argument.
+  `$XDG_RUNTIME_DIR/pipewire-0` exists), then `paplay` (when a PulseAudio/PipeWire
+  socket answers, with or without `pactl`), then `aplay`, then `ffplay`. Override
+  it with `TUI_VOICE_PLAYER`, for example `TUI_VOICE_PLAYER="mpv --no-video"`;
+  the WAV path is appended last, or substituted for `{file}`.
+- **No `pactl`/`arecord` installed.** That is supported: the plugin detects a
+  PulseAudio/PipeWire socket directly, captures `-f pulse -i default`, and falls
+  back to ALSA when no server answers. Install the helpers only if you want a
+  named device list.
 
 ## "Audio duration outside finite budget"
 

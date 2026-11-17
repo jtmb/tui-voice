@@ -8,7 +8,7 @@ The plugin is TUI-only, so it lives in the CLI config, not the server config.
 
 ```json
 {
-  "plugins": ["/home/brajam/repos/tui-voice"]
+  "plugins": ["/absolute/path/to/tui-voice"]
 }
 ```
 
@@ -18,7 +18,7 @@ Preserve unrelated CLI settings when editing. Verify:
 opencode plugin list
 ```
 
-The list should include `/home/brajam/repos/tui-voice`.
+The list should include the absolute path of this checkout.
 
 ## Start / restart
 
@@ -67,13 +67,14 @@ unless settings are actually corrupt.
 
 ## Dependencies
 
-The default local service and Python are outside this repository:
+The speech stack and its interpreters are outside this repository and are
+resolved by `voice_config.py`:
 
 ```bash
-~/repos/fire-tv-next/lulu-launcher/service
-~/repos/fire-tv-next/lulu-launcher/service/.venv/bin/python
+python3 voice_config.py --json   # config path, stack dirs, interpreters, audio
 ```
 
-Override with `TUI_VOICE_SERVICE` and `TUI_VOICE_PYTHON`. Windows ffmpeg is
-auto-discovered; override `TUI_VOICE_FFMPEG`. Microphone override:
-`TUI_VOICE_MIC`.
+Set them in `~/.config/tui-voice/config.json` or with `TUI_VOICE_SERVICE`,
+`TUI_VOICE_VOICE_DIR` and `TUI_VOICE_PYTHON`. ffmpeg and the playback tool are
+detected per platform; override `TUI_VOICE_FFMPEG` and `TUI_VOICE_PLAYER`.
+Microphone override: `TUI_VOICE_MIC`.

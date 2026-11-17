@@ -6,8 +6,10 @@ and playback are verified on a real PipeWire host. Live transcription and
 read-aloud remain unverified here because the external Whisper/Kokoro stack is not
 installed on this machine.
 
-This directory also contains [session-export.md](session-export.md), a readable
-transcript of the contributing session, so work can continue without replaying it.
+A raw session transcript was part of the first revision of this branch and was
+removed before merge: it was 83% of the diff, contained machine-specific tool
+output, and a public repository is not the place for a chat export. This handoff
+is the continuation document.
 
 ## Why this change exists
 
@@ -88,10 +90,10 @@ Owns all platform differences; stdlib only; no device is opened at import.
 
 ### `tui.tsx`
 
-- Removed the machine-specific interpreter fallback. Resolution is now:
-  `TUI_VOICE_PYTHON`, then `<TUI_VOICE_SERVICE>/.venv/bin/python` when it exists,
-  then `python3`. `TUI_VOICE_SERVICE` defaults to
-  `~/repos/fire-tv-next/lulu-launcher/service`.
+- Removed the machine-specific interpreter fallback. The plugin now asks
+  `voice_config.py --python`, so the TUI, helper and workers resolve the same
+  interpreter: `TUI_VOICE_PYTHON`, then `service/.venv/bin/python`, then
+  `python3`.
 - No UI, footer, command, or settings changes.
 
 ### Tests
@@ -137,10 +139,9 @@ Host: CachyOS, kernel 7.3.4, PipeWire running, OpenCode v2.2.0, Python 3.14.
 
 ### Not verified here
 
-- **Live transcription and read-aloud.** The external Whisper/Kokoro stack
-  (`web_voice`, worker venvs and models) is absent. No fake or cloud engine was
-  added. `dictate` reaches `Transcribing…` and then reports
-  `No module named 'web_voice'`; `say` fails at synthesis.
+- **Live transcription and read-aloud.** No external Whisper/Kokoro stack was
+  configured. No fake or cloud engine was added. After the portability revision
+  the helper reports a missing stack by name instead of importing `web_voice`.
 - **WSL2 execution.** No WSL host was available. The WSL2 argv, dshow discovery,
   `wslpath`, `%TEMP%`, PowerShell playback, and interop-env repair are preserved
   by construction and unit tests, not re-run on Windows.
@@ -180,8 +181,9 @@ timeout -s USR1 5 python3 voice_helper.py dictate
 
 To finish the unverified work:
 
-1. Point `TUI_VOICE_SERVICE` and `TUI_VOICE_VOICE_DIR` at a real local
-   Whisper/Kokoro checkout and confirm `transcribe` and `say` on Linux.
+1. Point `service` and `voice` in `~/.config/tui-voice/config.json` (or
+   `TUI_VOICE_SERVICE`/`TUI_VOICE_VOICE_DIR`) at a real local Whisper/Kokoro
+   checkout and confirm `transcribe` and `say` on Linux.
 2. Run the same flow on WSL2 to confirm no regression.
 3. Restart the TUI with the plugin installed and run the acceptance checklist in
    `AGENTS.md` (footer, settings, dictation, queueing, read-aloud, mute/resume).

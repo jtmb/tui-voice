@@ -63,7 +63,7 @@ elsewhere; the model directory and TTS interpreter must refer to the same stack.
 
 ```bash
 cd ~/repos/tui-voice
-export TUI_VOICE_VOICE_DIR="${TUI_VOICE_VOICE_DIR:-$HOME/repos/fire-tv-next/lulu-launcher/voice}"
+export TUI_VOICE_VOICE_DIR="${TUI_VOICE_VOICE_DIR:-$HOME/.local/share/tui-voice/voice}"
 export TUI_VOICE_TTS_PYTHON="${TUI_VOICE_TTS_PYTHON:-$TUI_VOICE_VOICE_DIR/.venv/bin/python}"
 
 cat /etc/os-release

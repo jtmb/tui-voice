@@ -25,16 +25,18 @@ import traceback
 import wave
 
 import audio_backend
+import voice_config
 from tts_worker import CPU_PROVIDER, requested_provider, startup_timeout, validate_backend
 from live_dictation import FRAME_BYTES, LiveTranscriber
 
-SERVICE = Path(os.environ.get('TUI_VOICE_SERVICE', str(Path.home() / 'repos/fire-tv-next/lulu-launcher/service')))
-VOICE_DIR = Path(os.environ.get('TUI_VOICE_VOICE_DIR', str(SERVICE.parent / 'voice')))
+# No repository or home-directory default: see voice_config for the lookup order.
+SERVICE = voice_config.service()
+VOICE_DIR = voice_config.voice()
 HERE = Path(__file__).resolve().parent
 ASR_WORKER = VOICE_DIR / 'asr-worker.py'
 TTS_WORKER = HERE / 'tts_worker.py'
-ASR_PYTHON = Path(os.environ.get('TUI_VOICE_ASR_PYTHON', str(VOICE_DIR / '.asr-venv/bin/python')))
-TTS_PYTHON = Path(os.environ.get('TUI_VOICE_TTS_PYTHON', str(VOICE_DIR / '.venv/bin/python')))
+ASR_PYTHON = Path(voice_config.asr_python())
+TTS_PYTHON = Path(voice_config.tts_python())
 
 
 def _bounded_env_int(name, default, maximum):
@@ -59,7 +61,8 @@ WARM_IDLE = _env_seconds('TUI_VOICE_WARM_IDLE', 1800)
 # override otherwise makes every start die with a bare argparse status 2.
 ASR_THREADS = _bounded_env_int('TUI_VOICE_ASR_THREADS', 8, 8)
 TTS_THREADS = _bounded_env_int('TUI_VOICE_TTS_THREADS', 8, 24)
-CMD = '/mnt/c/Windows/System32/cmd.exe'
+CMD = audio_backend.windows_cmd()
+WINDOWS_CWD = str(Path(CMD).parent) if Path(CMD).is_absolute() else '/'
 _current = None
 _capture_path = None
 _stop_requested = False
@@ -159,7 +162,7 @@ def windows_env():
             if pid.isdigit() and not Path('/proc', pid).exists():
                 continue
             env = {**os.environ, 'WSL_INTEROP': value}
-            probe = subprocess.run([CMD, '/c', 'exit', '0'], env=env, cwd='/mnt/c',
+            probe = subprocess.run([CMD, '/c', 'exit', '0'], env=env, cwd=WINDOWS_CWD,
                                    stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                                    stderr=subprocess.PIPE, timeout=1.5)
             if probe.returncode != 0:
@@ -504,6 +507,13 @@ def dictate(mic=None, threshold=-35, gain=0, emit=None):
 
 
 def voice():
+    module = SERVICE / 'web_voice.py'
+    if not module.is_file():
+        problem = voice_config.problem()
+        detail = f' ({problem})' if problem else ''
+        fail(f'No local speech stack at {SERVICE}{detail}. Point '
+             f'"service" in {voice_config.config_path()} or TUI_VOICE_SERVICE at the '
+             'directory that provides web_voice.py.')
     sys.path.insert(0, str(SERVICE))
     from web_voice import WebVoice
     return WebVoice()
@@ -648,10 +658,14 @@ def start_worker(kind, idle_seconds=None):
         script = ASR_WORKER if kind == 'asr' else TTS_WORKER
         if not python.is_file():
             log_event('error', f'missing {kind} worker Python', path=str(python))
-            return {'ok': False, 'error': f'Missing {kind} worker Python: {python}'}
+            return {'ok': False, 'error': f'Missing {kind} worker Python: {python}. '
+                                          f'Set it in {voice_config.config_path()} or the '
+                                          f'TUI_VOICE_{kind.upper()}_PYTHON variable.'}
         if not script.is_file():
             log_event('error', f'missing {kind} worker script', path=str(script))
-            return {'ok': False, 'error': f'Missing {kind} worker script: {script}'}
+            return {'ok': False, 'error': f'Missing {kind} worker script: {script}. '
+                                          f'Point "voice" in {voice_config.config_path()} or '
+                                          'TUI_VOICE_VOICE_DIR at your speech stack.'}
         idle = WARM_IDLE if idle_seconds is None else max(0, int(idle_seconds))
         threads = ASR_THREADS if kind == 'asr' else TTS_THREADS
         threads = max(1, min(threads, 8 if kind == 'asr' else 24))
