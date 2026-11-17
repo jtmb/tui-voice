@@ -11,7 +11,8 @@ service of its own.
 | `voice_helper.py` | Windows microphone capture (ffmpeg/dshow), silence detection, RMS report, local Whisper transcription, local Kokoro speech, warm-worker control |
 | `tts_worker.py` | Persistent local Kokoro worker: loads the pinned ONNX voice once and serves chunks over a private AF_UNIX socket |
 | `package.json` | `./tui` entrypoint |
-| `README.md` | User overview and install |
+| `README.md` | Product page for users |
+| `INSTALL.md` | Install guide: global vs project-local scope |
 | `rules.md` | Current owner contract |
 | `HANDOFF.md` | Current state and limits |
 | `docs/` | This documentation |

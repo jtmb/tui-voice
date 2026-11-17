@@ -1,6 +1,6 @@
 # tui-voice documentation
 
-Start with [`../README.md`](../README.md) for install/use and
+Start with [`../INSTALL.md`](../INSTALL.md) to install and
 [`../rules.md`](../rules.md) for the current product contract.
 
 | Document | Purpose |

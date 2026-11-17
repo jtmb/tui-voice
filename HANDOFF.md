@@ -1,5 +1,30 @@
 # tui-voice handoff
 
+## 2026-11-16 — production README and INSTALL guide
+
+- Owner asked for a production, mass-consumption README that is **not**
+  documentation, plus a top-of-README line pointing agents to an `INSTALL.md`
+  that asks whether the plugin should be installed locally or globally.
+- `README.md` is now a product page: centered logo/title/tagline, release and
+  privacy badges, an agent callout to `INSTALL.md`, a feature grid, a short
+  flow example, privacy statement, and an install CTA. Install commands,
+  settings tables, dependencies, troubleshooting and status were removed from
+  the README; they live in `INSTALL.md`, `docs/`, and this handoff.
+- New `INSTALL.md` carries the installation guide. It starts with an owner
+  decision (global vs local), then gives prerequisites, global `cli.json`
+  setup, project-local `.opencode/plugins/tui-voice` symlink setup, environment
+  overrides, first-run controls, verification, upgrade and uninstall. It states
+  that only one scope should be enabled.
+- Local discovery was checked with `opencode plugin list` from a throwaway
+  project containing `.opencode/plugins/tui-voice` symlinked to this checkout:
+  the list reported `.opencode/plugins/tui-voice` as `local`. The temporary
+  probe directory was removed. No plugin scope, service or model was changed.
+- Updated `AGENTS.md`, `docs/ARCHITECTURE.md`, `docs/README.md`, and the
+  repository-guide memory note to point at `INSTALL.md` and to keep the README
+  as a product page.
+- No source, voice runtime, service, model or release change. No release was
+  created for this documentation batch.
+
 ## 2026-11-16 — owner correction: microphone is an on/off toggle
 
 - Owner observed dictation cutting off mid-speech and explicitly requested

@@ -60,7 +60,8 @@ live_draft.ts           Footer-anchored native composer updates and draft owners
 live_dictation.py       Single-flight bounded streaming ASR and live hypotheses
 voice_helper.py         Windows mic capture, VAD, Whisper transcription, Kokoro TTS
 tts_worker.py           Persistent local Kokoro worker (AF_UNIX, no cloud)
-README.md               User-facing overview and install
+README.md               Product page for users (not documentation)
+INSTALL.md              Install guide: global vs project-local plugin scope
 rules.md                Current product contract
 HANDOFF.md              Current state, evidence, open work
 docs/                   Architecture, settings, testing, troubleshooting, runbook
