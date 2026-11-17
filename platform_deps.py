@@ -15,12 +15,15 @@ Stdlib only; importing this module runs no command.
 from __future__ import annotations
 
 from collections import namedtuple
+from contextlib import contextmanager
+import fcntl
 import json
 import os
 from pathlib import Path
 import shutil
 import subprocess
 import sys
+import tempfile
 
 import audio_backend
 
@@ -201,6 +204,20 @@ def plan_windows(keys, environ=None):
     return {'ok': True, 'commands': [command]}
 
 
+@contextmanager
+def _install_lock():
+    """Serialize installs so a startup check and a capture cannot race apt."""
+    directory = Path(tempfile.gettempdir()) / f'tui-voice-{os.getuid()}'
+    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+    handle = open(directory / 'deps.lock', 'a+')
+    try:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        yield
+    finally:
+        fcntl.flock(handle, fcntl.LOCK_UN)
+        handle.close()
+
+
 def _run_commands(commands, environ=None, timeout=900):
     """Run install argv lists, refreshing package metadata once if needed."""
     results = []
@@ -219,9 +236,15 @@ def _run_commands(commands, environ=None, timeout=900):
 
 def install(keys, environ=None, os_release=None, platform=None, timeout=900):
     """Install the requested requirement keys non-interactively."""
-    wanted = [key for key in keys if not present(key, environ)]
-    if not wanted:
-        return {'ok': True, 'installed': [], 'skipped': list(keys)}
+    with _install_lock():
+        wanted = [key for key in keys if not present(key, environ)]
+        if not wanted:
+            return {'ok': True, 'installed': [], 'skipped': list(keys)}
+        return _install_locked(wanted, environ=environ, os_release=os_release,
+                               platform=platform, timeout=timeout)
+
+
+def _install_locked(wanted, environ=None, os_release=None, platform=None, timeout=900):
     planned = plan(wanted, environ=environ, os_release=os_release, platform=platform)
     if not planned.get('ok'):
         return {'ok': False, 'installed': [], 'commands': planned.get('commands', []),
