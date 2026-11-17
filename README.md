@@ -21,6 +21,12 @@
 > **globally** (every project) or **locally** (this project only). Enable one
 > scope, never both.
 
+**Copy-paste this to your agent:**
+
+```text
+Install the tui-voice OpenCode plugin. Read INSTALL.md first (repo: https://github.com/jtmb/tui-voice) and ask me whether I want it global (all projects) or local (this project only), then do the install.
+```
+
 <p align="center">
   <a href="https://github.com/jtmb/tui-voice/releases"><img alt="Latest release" src="https://img.shields.io/github/v/release/jtmb/tui-voice?style=flat-square&label=release&color=6E56CF"></a>
   <img alt="Speech stays local" src="https://img.shields.io/badge/speech-100%25%20local-2EA043?style=flat-square">
