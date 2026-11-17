@@ -28,6 +28,14 @@
   <img alt="Platform WSL2" src="https://img.shields.io/badge/platform-WSL2-0078D4?style=flat-square">
 </p>
 
+<p align="center">
+  <img src="docs/media/gameplay.gif" width="860" alt="Screen recording of the tui-voice plugin in the OpenCode TUI: the footer voice panel, the command palette listing the Voice commands, and the Voice settings dialog for microphone and read-aloud">
+</p>
+
+<p align="center">
+  <sub>Real capture · footer panel, Voice commands, and Voice settings</sub>
+</p>
+
 ---
 
 <h3 align="center">Your voice, in your terminal.</h3>
