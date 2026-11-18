@@ -1,16 +1,5 @@
 ---
-{
-  "version": 1,
-  "scope": "repository",
-  "repository": "tui-voice",
-  "id": "storage-output-routing",
-  "title": "H-backed development output; preserve the existing voice runtime",
-  "tags": ["storage", "wsl", "artifacts", "preservation"],
-  "kind": "decision",
-  "updated": "2026-11-16",
-  "verified": "2026-11-16",
-  "sources": ["tools/artifact_env.py", "docs/STORAGE.md", "HANDOFF.md", "/home/brajam/repos/AGENTS.md"]
-}
+{"version": 1, "owner": "opencode-memory", "scope": "repo", "id": "storage-output-routing", "title": "H-backed development output; preserve the existing voice runtime", "tags": ["storage", "wsl", "artifacts", "preservation"], "kind": "decision", "updated": "2026-11-16", "verified": "2026-11-16", "sources": ["tools/artifact_env.py", "docs/STORAGE.md", "HANDOFF.md"]}
 ---
 
 James authorized the bounded storage setup to keep the existing checkout and use
@@ -35,3 +24,6 @@ Whisper/Kokoro runtimes/models and active tasks stay in place. No driver install
 runtime migration, model change or service restart is authorized by this setup.
 AF_UNIX sockets remain on the existing Linux runtime filesystem. Read the
 handoff for retained legacy paths, safety-check gaps and current byte counts.
+
+The shared parent rules at `/home/brajam/repos/AGENTS.md` (outside this repository) also apply.
+
