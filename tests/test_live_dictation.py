@@ -146,6 +146,7 @@ class LiveTranscriptionTests(unittest.TestCase):
              patch.object(helper, 'ffmpeg', return_value='local-ffmpeg'), \
              patch.object(helper, 'choose_mic') as discovery, \
              patch.object(helper, 'windows_env', return_value={}), \
+             patch.object(helper, 'asr_running', return_value=True), \
              patch.object(helper, 'warm_transcribe', return_value={'text': 'Live words'}), \
              patch.object(helper, 'log_event'):
             result = helper.dictate(mic='Known microphone', emit=emit)
@@ -226,6 +227,7 @@ class LiveTranscriptionTests(unittest.TestCase):
         with patch.object(helper.subprocess, 'Popen', return_value=process) as spawn, \
              patch.object(helper, 'ffmpeg', return_value='local-ffmpeg'), \
              patch.object(helper, 'windows_env', return_value={}), \
+             patch.object(helper, 'asr_running', return_value=True), \
              patch.object(helper, 'warm_transcribe', return_value={'text': 'Words'}), \
              patch.object(helper, 'log_event'):
             result = helper.dictate(mic='Known microphone', emit=emit)

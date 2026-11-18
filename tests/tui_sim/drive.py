@@ -9,6 +9,10 @@ service.json), the plugin loaded globally, and `pyte` in the interpreter:
     uv venv /tmp/sim && uv pip install --python /tmp/sim/bin/python pyte
     /tmp/sim/bin/python tests/tui_sim/drive.py plain|type|mid|inside
 
+load    the voice model is not in memory when the mic is pressed: the user must be
+        told it is loading, then that it is ready (fake helper, 6 s load)
+idle    change "Unload voice models when idle" in the settings dialog: the choice
+        must be applied to the running workers (`warm --set-idle`)
 late    the speech stack appears AFTER the TUI started (first-run race): dictation
         must use the new interpreter without restarting the TUI
 plain   no edits (a long turn must reach the last word)
@@ -40,12 +44,14 @@ work = Path(tempfile.mkdtemp(prefix="tui-voice-sim-"))
 wrapper = work / "python-wrapper"
 wrapper.write_text(f"""#!/bin/sh
 if [ "$2" = "dictate" ]; then exec {sys.executable} {HERE / 'fake_dictate.py'} {HERE / 'words.txt'} 0.3; fi
+if [ "$2" = "warm" ]; then exec {sys.executable} {HERE / 'fake_warm.py'} "$@"; fi
 exec {sys.executable} "$@"
 """)
 wrapper.chmod(0o755)
 env = {**os.environ, "OPENCODE_PASSWORD": service["password"], "TERM": "xterm-256color",
        "TUI_VOICE_PYTHON": str(wrapper), "TUI_VOICE_LOG_DIR": str(work / "log"),
-       "TUI_VOICE_AUTO_INSTALL": "0"}
+       "TUI_VOICE_AUTO_INSTALL": "0", "FAKE_WARM_LOG": str(work / "warm.log"),
+       "FAKE_LOAD_SECONDS": "6" if scenario == "load" else "0"}
 if scenario == "late":
     # No interpreter override: the stack starts empty and gains a venv later.
     del env["TUI_VOICE_PYTHON"]
@@ -76,9 +82,19 @@ def pump(seconds):
                 return
 
 
+TOAST = ("Microphone on", "Loading the voice model", "Voice model ready", "Fast voice model",
+         "Voice models unload", "Voice models stay", "Opening microphone", "Could not update")
+
+
 def snap(label):
     lines = [line.rstrip() for line in screen.display if line.strip()]
     print(f"--- {label} t={time.monotonic() - start:.0f}s")
+    for line in lines:
+        if "Unload voice models" in line:
+            print("   ROW:", " ".join(line.split("│")[1].split() if "│" in line else line.split()))
+    for line in lines:
+        if any(word in line for word in TOAST):
+            print("   TOAST:", " ".join(line.split())[:140])
     print("\n".join(line for line in lines[-9:] if "▀▀▀" not in line and "shift+tab" not in line))
 
 
@@ -89,12 +105,42 @@ if scenario == "late":
     venv_python.parent.mkdir(parents=True)
     venv_python.symlink_to(wrapper)  # the stack "finished installing" just now
     pump(1)
+if scenario == "idle":
+    os.write(master, b"\x1b\x13")  # Ctrl+Alt+S
+    pump(1.5)
+    snap("settings dialog")
+    for _ in range(40):  # walk down to the row, one key at a time
+        if any("Unload voice models" in line and "▸" in line for line in screen.display):
+            break
+        os.write(master, b"\x1b[B")
+        pump(0.15)
+    snap("on the idle row")
+    os.write(master, b"\x1b[C")      # right: 30 min -> 1 hour
+    pump(2)
+    snap("after Right")
+    os.write(master, b"\x1b[D")      # left: back to 30 min (leaves the saved setting as it was)
+    pump(2)
+    snap("after Left")
+    os.write(master, b"\x1b"); pump(0.5)
+    print("--- calls recorded by the fake `warm` command")
+    log = work / "warm.log"
+    print(log.read_text() if log.exists() else "(none)")
+    print("--- idle row text:", [" ".join(l.split()) for l in screen.display if "Unload voice" in l][:1])
+    proc.terminate()
+    sys.exit(0)
 os.write(master, F9)
 pump(3)
 snap("listening")
 if scenario == "plain":
     pump(45)
     snap("long turn")
+elif scenario == "load":
+    pump(0.3)
+    snap("0.3 s after the mic starts (model loading)")
+    pump(4)
+    snap("4 s in, still loading")
+    pump(5)
+    snap("model ready, words arriving")
 elif scenario == "late":
     pump(20)
     snap("dictation after the stack appeared")

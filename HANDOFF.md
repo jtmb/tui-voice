@@ -1,5 +1,49 @@
 # tui-voice handoff
 
+## 2026-11-18 — voice-model loading notice and idle-unload setting
+
+Owner request: tell the user when the voice model is loading after the mic is
+pressed (so they are not "talking into the wind"), and add a setting to unload the
+model after a period of inactivity.
+
+- **Loading notice (`voice_helper.py`, `tui.tsx`):** `dictate` starts a
+  `ModelLoader` thread next to opening the microphone. If the warm ASR worker is
+  not answering it emits `model loading`, starts it, then `model ready` (or
+  `failed`, with the reason, after which dictation continues on the slower cold
+  path and does not retry for 60 s). Recording never waits: audio is buffered
+  and decoded when the model is in. The TUI folds this into one toast ("Microphone
+  on. Loading the voice model: keep talking, your words will appear when it is
+  ready.") because a second toast would replace the first, then "Voice model
+  ready." The loader also covers a worker that idled out mid-dictation.
+- **Setting (`tui.tsx`, workers):** "Unload voice models when idle" in the dialog
+  (new MEMORY section): Never, 1, 5, 10, 30 min, 1 hour; default 30 min (the old
+  fixed value). A running worker takes the new limit through a new `set_idle`
+  operation (`tts_worker.py`, `stack/asr_worker.py`); `voice_helper.py warm
+  --set-idle SECONDS` sends it and, for an older worker without the operation
+  (the owner's external ASR worker), stops it so it returns with the new limit on
+  next use. Spawned helpers get `TUI_VOICE_WARM_IDLE` from the setting; without a
+  choice the environment variable/default still applies.
+- **Bug found on the way:** both workers only checked idleness when `accept()`
+  timed out, so any client polling status more than once a second kept a model
+  loaded far past its limit (a 3 s limit took ~10 s). The check now runs every
+  pass (3.3 s measured, process exits).
+- **Side effect fixed:** dictation used to start both workers; it now starts only
+  the recognizer (the helper does that), and read-aloud starts only the voice, so
+  dictating no longer loads the 470 MB read-aloud model.
+- **Evidence:** 192 Python tests pass (15 new in `tests/test_model_loading.py`,
+  including the real ASR worker loop). Real models on temporary sockets: recognizer
+  loads in 1.9 s with `loading`→`ready`; `set_idle` on the old worker reports
+  "restarts on next use" and a following dictation reloads with the notice; the
+  new TTS worker updates in place and unloads at 3.3 s. Real TUI via
+  `tests/tui_sim/drive.py`: `load` shows the loading toast, then "Voice model
+  ready.", then the words; `idle` changes the row 30 min → 1 hour → 30 min and
+  each choice reaches `warm --set-idle` (3600, 1800) with the confirmation toast.
+- **Not done / limits:** no notice when read-aloud reloads its voice after an
+  unload (the first reply starts a moment late); not tried with a real microphone;
+  the sim shares the owner's saved settings, and an exploratory run left the row at
+  10 min before it was put back to 30 min.
+- Not released: on `main` after v0.3.1.
+
 ## 2026-11-17 — v0.3.1 released, issue #4 closed
 
 - Published https://github.com/jtmb/tui-voice/releases/tag/v0.3.1 at `93559a4`

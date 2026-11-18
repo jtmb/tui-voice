@@ -422,7 +422,18 @@ def dictate(mic=None, threshold=-35, gain=0, emit=None):
     """Stream local hypotheses until explicitly switched off; no silence/time cutoff."""
     global _current, _stop_requested
     emit = emit or (lambda value: print(json.dumps(value, ensure_ascii=False), flush=True))
+    emit_lock = threading.Lock()
+    send = emit
+
+    def emit(value):  # the loader thread and the capture loop both report events
+        with emit_lock:
+            send(value)
+
     emit({'event': 'starting'})  # SIGUSR1 is safe only after this handshake.
+    loader = ModelLoader(emit)
+    # Start loading now, in parallel with opening the microphone, so the user is
+    # told immediately and nothing waits for the model before recording begins.
+    threading.Thread(target=loader.ensure, daemon=True).start()
     if _stop_requested:
         _stop_requested = False
         return {'ok': True, 'text': ''}
@@ -452,7 +463,7 @@ def dictate(mic=None, threshold=-35, gain=0, emit=None):
 
     def decode(pcm):
         encoded = _encode_wav(pcm, 1, 2, 16000)
-        result = warm_transcribe(encoded)
+        result = warm_transcribe(encoded) if loader.ensure() else None
         if result is None:
             result = cold_voice().transcribe(encoded)
         return result.get('text', '') if result else ''
@@ -680,6 +691,52 @@ def worker_request(path, request, timeout=180, quiet=False, required=False):
     return result if isinstance(result, dict) else None
 
 
+def asr_running():
+    return worker_request(asr_socket(), {'operation': 'status'}, timeout=3, quiet=True) is not None
+
+
+class ModelLoader:
+    """Brings the warm ASR worker up while the microphone is already recording.
+
+    Capture never waits for it: audio is buffered and decoded once the model is
+    in memory. The events let the UI say so instead of leaving the user talking
+    into silence. After an idle unload this runs again on the next dictation.
+    """
+    RETRY_AFTER = 60.0
+
+    def __init__(self, emit):
+        self.emit = emit
+        self.lock = threading.Lock()
+        self.failed_at = None
+
+    def ensure(self):
+        """True when the warm worker is answering; loads it first when it is not."""
+        with self.lock:
+            if asr_running():
+                self.failed_at = None
+                return True
+            if self.failed_at is not None and time.monotonic() - self.failed_at < self.RETRY_AFTER:
+                return False
+            self.emit({'event': 'model', 'state': 'loading'})
+            began = time.monotonic()
+            try:
+                result = start_worker('asr')
+            except Exception as error:  # a broken stack must not end the dictation
+                result = {'ok': False, 'error': f'{type(error).__name__}: {error}'}
+            loaded = bool(result.get('ok')) and asr_running()
+            seconds = round(time.monotonic() - began, 1)
+            if loaded:
+                self.failed_at = None
+                self.emit({'event': 'model', 'state': 'ready', 'seconds': seconds})
+            else:
+                self.failed_at = time.monotonic()
+                self.emit({'event': 'model', 'state': 'failed', 'seconds': seconds,
+                           'error': str(result.get('error') or 'the worker did not start')[:300]})
+            log_event('info' if loaded else 'warning', 'voice model load',
+                      loaded=loaded, seconds=seconds, error=result.get('error'))
+            return loaded
+
+
 def warm_transcribe(encoded):
     result = worker_request(asr_socket(), {'operation': 'transcribe', 'wav': encoded}, timeout=120)
     if (result is None or not isinstance(result.get('text'), str)
@@ -723,6 +780,33 @@ def warm_lock():
     finally:
         fcntl.flock(handle, fcntl.LOCK_UN)
         handle.close()
+
+
+MAX_IDLE_SECONDS = 7 * 24 * 3600
+
+
+def set_idle(seconds):
+    """Apply a new idle-unload limit to running workers.
+
+    Workers that predate the `set_idle` operation are stopped instead; they come
+    back with the new limit the next time they are needed. 0 means never unload.
+    """
+    seconds = max(0, min(int(seconds), MAX_IDLE_SECONDS))
+    applied = {}
+    for kind in ('asr', 'tts'):
+        path = asr_socket() if kind == 'asr' else tts_socket()
+        if worker_request(path, {'operation': 'status'}, timeout=3, quiet=True) is None:
+            applied[kind] = 'not running'
+            continue
+        result = worker_request(path, {'operation': 'set_idle', 'seconds': seconds},
+                                timeout=5, quiet=True)
+        if result is not None:
+            applied[kind] = 'updated'
+            continue
+        stopped = stop_worker(kind)
+        applied[kind] = 'restarts on next use' if stopped.get('ok') else 'could not be updated'
+    return {'ok': 'could not be updated' not in applied.values(),
+            'idle_seconds': seconds, 'applied': applied}
 
 
 def start_worker(kind, idle_seconds=None):
@@ -1125,6 +1209,8 @@ def main():
     warm_parser.add_argument('--restart', action='store_true')
     warm_parser.add_argument('--kind', choices=('asr', 'tts', 'both'), default='both')
     warm_parser.add_argument('--idle-seconds', type=int)
+    warm_parser.add_argument('--set-idle', type=int, metavar='SECONDS',
+                             help='change the idle-unload limit of running workers (0 = never)')
 
     args = parser.parse_args()
     if args.command == 'doctor':
@@ -1138,6 +1224,9 @@ def main():
 
     if args.command == 'warm':
         kinds = ('asr', 'tts') if args.kind == 'both' else (args.kind,)
+        if args.set_idle is not None:
+            result = set_idle(args.set_idle)
+            output(result, 0 if result['ok'] else 1)
         if args.status:
             output({'ok': True, 'workers': warm_status()})
         if args.stop or args.restart:

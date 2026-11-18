@@ -43,6 +43,9 @@ requirements remain.
   types or fixes, before, inside or after the dictated words, is kept; speech
   continues after it with only the words not yet shown, and the final transcript
   still arrives when the mic is turned off.
+- When the microphone is pressed and the voice model is not in memory, tell the
+  user it is loading (and when it is ready) while recording already runs, so they
+  are never talking into silence. Loading must never delay or drop the audio.
 - Show local recognition in the message box while the user speaks, not only after
   recording stops. Revise the live phrase without duplicating it or overwriting
   manual draft edits. Keep capture independent of ASR latency and requests bounded.
@@ -71,9 +74,11 @@ requirements remain.
 
 - Settings are global and persisted under `tui-voice`.
 - The screen tunes: input device, speech
-  threshold, input gain, microphone test, read-aloud, read-aloud voice, reset.
+  threshold, input gain, microphone test, read-aloud, read-aloud voice, unloading
+  voice models when idle, reset.
 - Defaults: manual on/off recording, automatic microphone, −35 dB, 0 dB gain,
-  read-aloud On, Heart.
+  read-aloud On, Heart, models unload after 30 minutes idle (choices: Never, 1, 5,
+  10, 30 min, 1 hour).
 - Keyboard: `↑↓` select, `←→` change, `Enter` choose, `Esc` close.
 - Settings must affect the actual recorder, not just the UI.
 

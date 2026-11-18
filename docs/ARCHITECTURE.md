@@ -250,7 +250,7 @@ installs working through `paplay` and `-f pulse`.
 | Warm TTS Python | `voice/.venv/bin/python` | `TUI_VOICE_TTS_PYTHON` |
 | TTS execution provider | `cpu`; opt in with `migraphx` | `TUI_VOICE_TTS_PROVIDER` |
 | TTS model | CPU and MIGraphX: `kokoro-v1.0.onnx` (FP32); INT8 is opt-in | `TUI_VOICE_TTS_MODEL` (absolute or relative to `voice/models`) |
-| Worker idle lifetime | 1800 seconds | `TUI_VOICE_WARM_IDLE` |
+| Worker idle lifetime (model unload) | 1800 seconds; the **Unload voice models when idle** setting overrides it | `TUI_VOICE_WARM_IDLE` |
 | ASR worker threads | physical cores (max 8) | `TUI_VOICE_ASR_THREADS` |
 | TTS worker threads | 8 | `TUI_VOICE_TTS_THREADS` |
 | ASR socket | `$XDG_RUNTIME_DIR/tui-voice/asr.sock` | `TUI_VOICE_ASR_SOCKET` |

@@ -450,6 +450,9 @@ def client_gone(connection):
         return True
 
 
+MAX_IDLE_SECONDS = 7 * 24 * 3600
+
+
 def serve(path, engine, idle_seconds=1800):
     engine.require_gpu_execution()
     path = Path(path)
@@ -464,7 +467,7 @@ def serve(path, engine, idle_seconds=1800):
     server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     started = time.monotonic()
     state = {'requests': 0, 'last': started, 'stopping': False,
-             'active': 0, 'queued': 0}
+             'active': 0, 'queued': 0, 'idle': idle_seconds}
     state_lock = threading.Lock()
     speak_lock = threading.Lock()
 
@@ -491,7 +494,18 @@ def serve(path, engine, idle_seconds=1800):
                     'pid': os.getpid(), 'socket': str(path), 'requests': state['requests'],
                     'voices': sorted(engine.voices),
                     'uptime_s': round(time.monotonic() - started, 1),
-                    'idle_seconds': idle_seconds, 'rss_mb': rss_mb(), **engine.describe()}})
+                    'idle_seconds': state['idle'], 'rss_mb': rss_mb(), **engine.describe()}})
+                return
+            if operation == 'set_idle':
+                seconds = request.get('seconds')
+                if (not isinstance(seconds, int) or isinstance(seconds, bool)
+                        or not 0 <= seconds <= MAX_IDLE_SECONDS):
+                    send_frame(connection, {'ok': False, 'error': 'seconds must be 0..604800'})
+                    return
+                with state_lock:
+                    state['idle'] = seconds
+                    state['last'] = time.monotonic()  # the new limit counts from now
+                send_frame(connection, {'ok': True, 'result': {'idle_seconds': seconds}})
                 return
             if operation != 'speak':
                 send_frame(connection, {'ok': False, 'error': 'Unsupported operation'})
@@ -543,14 +557,16 @@ def serve(path, engine, idle_seconds=1800):
         server.listen(8)
         server.settimeout(1)
         while not state['stopping']:
+            # Checked on every pass, not only when accept() times out: a client
+            # that polls status more than once a second must not keep it loaded.
+            with state_lock:
+                idle = (state['idle'] and not state['active'] and not state['queued']
+                        and time.monotonic() - state['last'] > state['idle'])
+            if idle:
+                break
             try:
                 connection, _ = server.accept()
             except socket.timeout:
-                with state_lock:
-                    idle = (idle_seconds and not state['active'] and not state['queued']
-                            and time.monotonic() - state['last'] > idle_seconds)
-                if idle:
-                    break
                 continue
             threading.Thread(target=handle, args=(connection,), daemon=True).start()
     finally:

@@ -184,7 +184,10 @@ the existing esbuild; output belongs under `$TUI_VOICE_BUILD_DIR`. It checks
 revision replacement, existing drafts, typing before/inside/after the dictated
 text without ever stopping dictation, sent drafts not resurrected, remounts,
 footer lookup and split JSON transport. `tests/tui_sim/drive.py` reproduces the
-same editing patterns in a real TUI with a fake helper (see its docstring). `tests/native_draft_probe.ts`
+same editing patterns in a real TUI with a fake helper (see its docstring); its
+`load` scenario checks the model-loading messages and `idle` the settings row.
+`tests/test_model_loading.py` covers the loader, `set_idle` and the real ASR worker
+loop (limit changes in place, `0` never unloads, a polled worker still unloads). `tests/native_draft_probe.ts`
 can be bundled as a temporary TUI-only package and loaded in an exclusively
 task-owned TUI using `OPENCODE_CLI_CONFIG_CONTENT`. Set
 `TUI_VOICE_NATIVE_RECEIPT` to an H output file; it checks the real host textarea,

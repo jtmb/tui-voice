@@ -60,7 +60,16 @@ function logError(where: string, error: any, detail?: string) {
 }
 
 type Phase = "idle" | "listening" | "transcribing" | "thinking" | "speaking" | "error"
-type Settings = { mic: string; voice: string; threshold: number; gain: number; readAloud: boolean }
+type Settings = { mic: string; voice: string; threshold: number; gain: number; readAloud: boolean; idleMinutes?: number }
+
+// How long the loaded voice models may sit unused before they are unloaded to
+// free memory. 0 = keep them loaded. They reload on the next use, and dictation
+// says so while that happens.
+const IDLE_CHOICES = [0, 1, 5, 10, 30, 60]
+const DEFAULT_IDLE_MINUTES = 30
+const idleMinutes = () => Number(settings.idleMinutes ?? DEFAULT_IDLE_MINUTES)
+const idleLabel = (minutes: number) =>
+  minutes === 0 ? "Never" : minutes === 60 ? "1 hour" : `${minutes} min`
 
 class VoiceCancelled extends Error {
   constructor() {
@@ -79,6 +88,8 @@ type DictationTurn = {
   sessionID: string
   child: ChildProcess | null
   ready: boolean
+  listening: boolean
+  loading: boolean
   cancelled: boolean
   stopRequested: boolean
 }
@@ -115,8 +126,16 @@ function phaseColor() {
     : phase() === "error" ? "#fa9e95" : "#3ca9e8"
 }
 
-function toast(context: any, message: string, variant: "info" | "success" | "warning" | "error" = "info") {
-  context.ui.toast.show({message, variant, duration: 3500})
+function toast(context: any, message: string, variant: "info" | "success" | "warning" | "error" = "info",
+  duration = 3500) {
+  context.ui.toast.show({message, variant, duration})
+}
+
+// Helpers inherit the user's idle-unload choice. Without an explicit choice the
+// environment (TUI_VOICE_WARM_IDLE) or the built-in default applies.
+function helperEnv() {
+  if (settings.idleMinutes === undefined) return process.env
+  return {...process.env, TUI_VOICE_WARM_IDLE: String(idleMinutes() * 60)}
 }
 
 function helperPayload(args: string[], timeoutMs: number | null, track?: (child: ChildProcess | null) => void,
@@ -125,7 +144,7 @@ function helperPayload(args: string[], timeoutMs: number | null, track?: (child:
     return Promise.reject(new Error("Speech models are still installing. Try again when “Local speech is ready” appears."))
   }
   return new Promise((resolve, reject) => {
-    const childProcess = spawn(pythonPath(), [HELPER, ...args], {stdio: ["ignore", "pipe", "pipe"]})
+    const childProcess = spawn(pythonPath(), [HELPER, ...args], {stdio: ["ignore", "pipe", "pipe"], env: helperEnv()})
     track?.(childProcess)
     let stdout = ""
     let stderr = ""
@@ -182,10 +201,13 @@ function helperPayload(args: string[], timeoutMs: number | null, track?: (child:
 
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
 
-function prewarmWorkers() {
+// Start (or restore after an idle unload) the warm workers that are needed.
+// Dictation loads its own recognizer and reports it, so it does not call this.
+function prewarmWorkers(kind: "asr" | "tts" | "both" = "both") {
   if (speechInstalling) return
   try {
-    const worker = spawn(pythonPath(), [HELPER, "warm", "--start"], {detached: true, stdio: "ignore"})
+    const worker = spawn(pythonPath(), [HELPER, "warm", "--start", "--kind", kind],
+      {detached: true, stdio: "ignore", env: helperEnv()})
     worker.on("error", () => {})
     worker.unref()
   } catch {}
@@ -272,7 +294,7 @@ function ownsDictation(turn: DictationTurn) {
 
 function beginDictation(): DictationTurn {
   const turn: DictationTurn = {
-    id: ++dictationCounter, sessionID: "", child: null, ready: false,
+    id: ++dictationCounter, sessionID: "", child: null, ready: false, listening: false, loading: false,
     cancelled: false, stopRequested: false,
   }
   dictationTurn = turn
@@ -391,7 +413,6 @@ async function toggleVoice(context: any) {
     if (!ownsDictation(turn)) return
     turn.sessionID = route.sessionID
     draft = {sessionID: turn.sessionID, text: "", writer: new LiveDraft(), final: false}
-    prewarmWorkers()
     toast(context, "Opening microphone…", "info")
     const args = [
       "dictate",
@@ -411,8 +432,26 @@ async function toggleVoice(context: any) {
         if (turn.stopRequested) requestDictationStop(turn)
       } else if (event.event === "listening") {
         lastMicrophone = event.device || ""
+        turn.listening = true
         setPhase("listening")
-        toast(context, "Microphone on. Press F9 or the mic again to stop.", "info")
+        // One message: a second toast would replace this one before it is read.
+        toast(context, turn.loading
+          ? "Microphone on. Loading the voice model: keep talking, your words will appear when it is ready."
+          : "Microphone on. Press F9 or the mic again to stop.", "info", turn.loading ? 6000 : 3500)
+      } else if (event.event === "model") {
+        if (event.state === "loading") {
+          turn.loading = true
+          if (turn.listening) {
+            toast(context, "Loading the voice model: keep talking, your words will appear when it is ready.", "info", 6000)
+          }
+        } else if (event.state === "ready") {
+          turn.loading = false
+          toast(context, "Voice model ready.", "success")
+        } else if (event.state === "failed") {
+          turn.loading = false
+          toast(context, `Fast voice model unavailable (${event.error || "unknown error"}). Using the slower fallback.`,
+            "warning", 6000)
+        }
       } else if (event.event === "transcribing") {
         setPhase("transcribing")
       } else if (event.event === "partial" && typeof event.text === "string") {
@@ -496,7 +535,7 @@ function speakReply(context: any, text: string, options?: {startChunk?: number; 
   const base = process.env.TUI_VOICE_TTS_PROVIDER?.trim().toLowerCase() === "migraphx"
     ? 600000 : 240000
   const timeout = Math.min(1800000, Math.max(base, remaining * 60000))
-  prewarmWorkers()
+  prewarmWorkers("tts")
   speechQueue = speechQueue.then(async () => {
     const sameSession = () => !options?.sessionID || (
       context.ui.router.current()?.type === "session" &&
@@ -606,6 +645,30 @@ function cycleNumber(key: keyof Settings, choices: number[], fallback: number, d
   void saveSetting(key, next)
 }
 
+let idleApplyTimer: ReturnType<typeof setTimeout> | undefined
+
+// Save the choice, then tell any running workers (debounced while cycling).
+function chooseIdle(context: any, direction: number) {
+  const current = idleMinutes()
+  let index = IDLE_CHOICES.indexOf(current)
+  if (index < 0) index = IDLE_CHOICES.indexOf(DEFAULT_IDLE_MINUTES)
+  const next = IDLE_CHOICES[(index + direction + IDLE_CHOICES.length) % IDLE_CHOICES.length]
+  void saveSetting("idleMinutes", next).then(() => {
+    if (idleApplyTimer) clearTimeout(idleApplyTimer)
+    idleApplyTimer = setTimeout(async () => {
+      try {
+        await helperPayload(["warm", "--set-idle", String(idleMinutes() * 60)], 30000)
+        toast(context, idleMinutes() === 0
+          ? "Voice models stay loaded."
+          : `Voice models unload after ${idleLabel(idleMinutes())} without use.`, "success")
+      } catch (error: any) {
+        logError("idle setting", error)
+        toast(context, `Could not update running voice models: ${error?.message || error}`, "warning", 5000)
+      }
+    }, 500)
+  })
+}
+
 function VoiceSettings(props: {onClose: () => void}) {
   const context = usePlugin()
   const theme = context.theme.surface("dialog")
@@ -682,7 +745,9 @@ function VoiceSettings(props: {onClose: () => void}) {
       draft.gain = 6
       draft.readAloud = true
       draft.voice = "heart"
+      draft.idleMinutes = DEFAULT_IDLE_MINUTES
     })
+    chooseIdle(context, 0)
     setTestStatus("")
     toast(context, "Defaults restored.", "success")
     setSelected(1)
@@ -743,10 +808,18 @@ function VoiceSettings(props: {onClose: () => void}) {
           speakReply(context, "This is a local voice test. Read-aloud is speaking through the Windows speakers. Mute it with the speaker button, then unmute to resume.")
         },
       },
+      {kind: "section", title: "MEMORY"},
+      {
+        kind: "item", id: "idle", label: "Unload voice models when idle",
+        description: "Frees memory after this long without dictation or read-aloud. Models reload on the next use and dictation tells you while it loads. Never keeps them loaded.",
+        value: () => idleLabel(idleMinutes()),
+        adjust: direction => chooseIdle(context, direction),
+        activate: () => chooseIdle(context, 1),
+      },
       {kind: "section", title: "BEHAVIOR"},
       {
         kind: "item", id: "reset", label: "Reset to defaults",
-        description: "Manual on/off recording, -35 dB speech threshold, +6 dB gain, automatic microphone.",
+        description: "Manual on/off recording, -35 dB speech threshold, +6 dB gain, automatic microphone, models unload after 30 min idle.",
         value: () => "Restore",
         activate: resetDefaults,
       },

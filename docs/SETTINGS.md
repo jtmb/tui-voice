@@ -15,10 +15,33 @@ native-sized (`large`), themed by the active OpenCode theme, and closes with
 | Read replies aloud | On | On/Off | Local Kokoro read-back; footer speaker Replies control toggles this too |
 | Read-aloud voice | Heart | Heart, Velvet, English Rose, Dora | Kokoro preset for read-back |
 | Test read-aloud | — | action | Plays a sample; mute/unmute resumes it |
+| Unload voice models when idle | 30 min | Never, 1, 5, 10, 30 min, 1 hour | Frees the loaded Whisper/Kokoro models after this long without dictation or read-aloud; they reload on the next use |
 | Reset to defaults | — | action | Restores the defaults below |
 
 Defaults: manual on/off recording, automatic mic, **−35 dB**, **+6 dB**, read-aloud
-**On**, **Heart**.
+**On**, **Heart**, models unload after **30 min** idle.
+
+## Voice model loading and unloading
+
+The recognizer and the read-aloud voice stay in memory between uses so that the
+next turn starts at once. After the idle time you choose they unload (about
+200 MB for recognition and 470 MB for read-aloud).
+
+When you press the microphone and the recognizer is not loaded, the plugin says
+so: *"Microphone on. Loading the voice model: keep talking, your words will
+appear when it is ready."* followed by *"Voice model ready."* (about 2 s here).
+Recording starts immediately and nothing you say is lost; the words appear as
+soon as the model is in memory. If the fast worker cannot start, you get a
+warning and dictation continues on the slower fallback.
+
+Changing the setting applies at once to models that are already loaded. A
+recognizer from an older stack that cannot change its limit in place is stopped
+and comes back with the new limit the next time you dictate. Read-aloud reloads
+its voice the same way, without a message, so the first reply after an unload
+starts a moment late.
+
+`TUI_VOICE_WARM_IDLE` (seconds) still sets the limit when you have never chosen
+one in the dialog; a choice made in the dialog wins.
 
 ## Tuning missing words
 

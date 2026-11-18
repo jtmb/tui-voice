@@ -25,6 +25,7 @@ MAX_FRAME = 16 * 1024 * 1024
 MAX_RESPONSE = 16 * 1024 * 1024
 START_TIMEOUT = 45.0
 MAX_THREADS = 8
+MAX_IDLE_SECONDS = 7 * 24 * 3600
 
 
 def _default_threads():
@@ -165,17 +166,20 @@ def serve(path, model, idle_seconds, threads):
     started = time.monotonic()
     last = started
     requests = 0
+    idle_limit = idle_seconds
     try:
         server.bind(str(path))
         os.chmod(path, 0o600)
         server.listen(4)
         server.settimeout(1)
         while True:
+            # Checked on every pass, not only when accept() times out: a client
+            # that polls status more than once a second must not keep it loaded.
+            if idle_limit and time.monotonic() - last > idle_limit:
+                break
             try:
                 connection, _ = server.accept()
             except socket.timeout:
-                if idle_seconds and time.monotonic() - last > idle_seconds:
-                    break
                 continue
             with connection:
                 owner = peer_uid(connection)
@@ -198,7 +202,17 @@ def serve(path, model, idle_seconds, threads):
                         'pid': os.getpid(), 'socket': str(path), 'device': 'cpu',
                         'threads': threads, 'requests': requests,
                         'uptime_s': round(time.monotonic() - started, 1),
-                        'idle_seconds': idle_seconds, 'rss_mb': rss_mb()}})
+                        'idle_seconds': idle_limit, 'rss_mb': rss_mb()}})
+                    continue
+                if operation == 'set_idle':
+                    seconds = request.get('seconds')
+                    if (not isinstance(seconds, int) or isinstance(seconds, bool)
+                            or not 0 <= seconds <= MAX_IDLE_SECONDS):
+                        send_frame(connection, {'ok': False, 'error': 'seconds must be 0..604800'})
+                        continue
+                    idle_limit = seconds
+                    last = time.monotonic()  # the new limit counts from now
+                    send_frame(connection, {'ok': True, 'result': {'idle_seconds': seconds}})
                     continue
                 if operation != 'transcribe':
                     send_frame(connection, {'ok': False, 'error': 'Unsupported operation'})
@@ -211,6 +225,7 @@ def serve(path, model, idle_seconds, threads):
                     requests += 1
                 except Exception as error:  # bounded; no traceback to callers
                     response = {'ok': False, 'error': f'{type(error).__name__}: {error}'[:400]}
+                last = time.monotonic()
                 try:
                     send_frame(connection, response)
                 except OSError:
