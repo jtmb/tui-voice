@@ -1,5 +1,22 @@
 # tui-voice handoff
 
+## 2026-11-20 — plan saved: last-word cutoff and read-aloud seek
+
+- Owner reported two things: speech cuts off the last word (confirmed **both**
+  read-aloud and dictation), and there are no rewind/fast-forward controls for
+  read-aloud.
+- No plugin code changed in this step. The agreed plan is saved at
+  [docs/planning/operations/2026-11-20-last-word-and-seek.md](docs/planning/operations/2026-11-20-last-word-and-seek.md):
+  ~250 ms trailing silence per read-aloud clip; a ~400 ms post-stop capture window
+  and trailing silence before dictation transcription; one-sentence seek with
+  F7/F8, mouse wheel over the speaker icon and `/read-back` / `/read-forward`,
+  with the footer unchanged. Owner chose one-sentence steps and the keyboard+wheel
+  controls.
+- Also planned: the `rules.md` "ask questions only with the question tool" rule,
+  and stopping the v0.3.1 re-exec test from writing into the real `voice.log`.
+- Current `main` at this entry: `6102e35`. Nothing was released for v0.3.1+
+  changes beyond the published v0.3.1.
+
 ## 2026-11-18 — voice-model loading notice and idle-unload setting
 
 Owner request: tell the user when the voice model is loading after the mic is

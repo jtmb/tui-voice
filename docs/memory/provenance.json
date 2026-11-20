@@ -1,0 +1,16 @@
+{
+  "notes": {
+    "storage-output-routing": {
+      "applied": "2026-11-18T10:28:29+00:00",
+      "note_sha256": "1ea844242a48bd6f562458327b6cbc1f2545340f3929c794ea7de5f3e7680d02",
+      "sources": {
+        "HANDOFF.md": "dbe1ca301b498e5924a05b4ebc5c6ffbc23abcdf0b79cb512378d812d8e0f8c4",
+        "docs/STORAGE.md": "a603487fffbc16bc0a6e7b3c6c49a84c56056985c36e1ca09e07c75b0c86edb3",
+        "tools/artifact_env.py": "3a88f9c6f0a400e3c3e084bdf292655103d54101079c0432e870e0b7f1ed10dc"
+      },
+      "updated": "2026-11-16",
+      "verified": "2026-11-16"
+    }
+  },
+  "version": 1
+}
