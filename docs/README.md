@@ -7,6 +7,7 @@ Start with [`../INSTALL.md`](../INSTALL.md) to install and
 | --- | --- |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Files, data flow, state, queues, dependencies |
 | [SETTINGS.md](SETTINGS.md) | Every setting, defaults, and tuning guidance |
+| [LIVE_CONVERSATION.md](LIVE_CONVERSATION.md) | Optional local live chat, streaming, interruption, controls and acceptance |
 | [TESTING.md](TESTING.md) | Fresh-TUI gate, helper checks, verified evidence |
 | [AMD_GPU.md](AMD_GPU.md) | RX 7900 XT runtime setup and proof of GPU inference |
 | [TROUBLESHOOTING.md](TROUBLESHOOTING.md) | Plugin not loading, no audio, no transcript, theme issues |

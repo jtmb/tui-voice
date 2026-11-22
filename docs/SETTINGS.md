@@ -15,11 +15,20 @@ native-sized (`large`), themed by the active OpenCode theme, and closes with
 | Read replies aloud | On | On/Off | Local Kokoro read-back; footer speaker Replies control toggles this too |
 | Read-aloud voice | Heart | Heart, Velvet, English Rose, Dora | Kokoro preset for read-back |
 | Test read-aloud | — | action | Plays a sample; mute/unmute resumes it |
+| Live conversation | Off | On/Off | Sends spoken turns to the selected local model, streams speech and supports interruption; not persisted across restarts |
+| Pause before replying | 0.8 s | 0.5, 0.8, 1.2, 1.8, 2.5 s | Live-only end-of-turn silence, applied on the next Live start |
 | Unload voice models when idle | 30 min | Never, 1, 5, 10, 30 min, 1 hour | Frees the loaded Whisper/Kokoro models after this long without dictation or read-aloud; they reload on the next use |
 | Reset to defaults | — | action | Restores the defaults below |
 
 Defaults: manual on/off recording, automatic mic, **−35 dB**, **+6 dB**, read-aloud
 **On**, **Heart**, models unload after **30 min** idle.
+
+`Ctrl+Alt+L` or `/voice-live` toggles Live conversation independently of ordinary
+F9 dictation. Use a configured local OpenCode model and headphones. Turning Live
+off preserves unsent recognized words in the original draft. Read-aloud mute
+also mutes Live; unmuting Live begins with a fresh phrase and does not replay old
+speech. The microphone/read-aloud test actions are unavailable during Live so
+they cannot compete with its devices. See [LIVE_CONVERSATION.md](LIVE_CONVERSATION.md).
 
 ## Voice model loading and unloading
 

@@ -1,5 +1,22 @@
 # Architecture
 
+## Optional live conversation
+
+The ordinary dictation and completed-reply read-aloud flows below remain the
+default. Explicit Live mode is a separate controller described in
+[LIVE_CONVERSATION.md](LIVE_CONVERSATION.md). `voice_helper.py listen` emits
+speech activity and finalized utterances while capture continues;
+`live_controller.ts` schedules native OpenCode prompts, buffers streamed phrases,
+and cancels old audio before admitting a new turn. `opencode_live.ts` verifies
+the selected local model and wraps the current v2 APIs; `live_mode.ts` owns
+start/stop, route changes, and recovery of unsent text. Live and Dictation share
+models but never own the microphone at the same time.
+
+Live is not persisted as On. Its only new saved setting is `liveSilence` (default
+0.8 seconds). The existing speaker setting also mutes Live, where queued audio
+is discarded rather than resumed. Late live-owned assistant messages are excluded
+from ordinary completed-reply read-aloud even after Live stops.
+
 `tui-voice` is a TUI-only OpenCode plugin. It has no server part and no network
 service of its own.
 

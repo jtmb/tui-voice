@@ -4,6 +4,9 @@
   "private": true,
   "type": "module",
   "description": "Local voice dictation for the OpenCode TUI",
+  "scripts": {
+    "test:ts": "node --test tests/*.test.ts"
+  },
   "exports": {
     "./tui": "./tui.tsx"
   }

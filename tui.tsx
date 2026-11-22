@@ -7,6 +7,8 @@ import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { readLastReply } from "./read_last"
 import { jsonLines, LiveDraft, locateComposer } from "./live_draft"
+import { createOpenCodeLiveAdapter } from "./opencode_live"
+import { LiveConversationMode, type LiveCapture } from "./live_mode"
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const HELPER = join(HERE, "voice_helper.py")
@@ -45,7 +47,7 @@ function pythonPath(): string {
 
 // True while this TUI's own background installer is provisioning the stack.
 let speechInstalling = false
-const NEEDS_STACK = new Set(["dictate", "say", "transcribe", "warm"])
+const NEEDS_STACK = new Set(["dictate", "listen", "say", "transcribe", "warm"])
 
 function logError(where: string, error: any, detail?: string) {
   try {
@@ -60,7 +62,7 @@ function logError(where: string, error: any, detail?: string) {
 }
 
 type Phase = "idle" | "listening" | "transcribing" | "thinking" | "speaking" | "error"
-type Settings = { mic: string; voice: string; threshold: number; gain: number; readAloud: boolean; idleMinutes?: number }
+type Settings = { mic: string; voice: string; threshold: number; gain: number; readAloud: boolean; idleMinutes?: number; liveSilence?: number }
 
 // How long the loaded voice models may sit unused before they are unloaded to
 // free memory. 0 = keep them loaded. They reload on the next use, and dictation
@@ -81,6 +83,11 @@ class VoiceCancelled extends Error {
 const [active, setActive] = createSignal(false)
 const [phase, setPhase] = createSignal<Phase>("idle")
 const [settingsOpen, setSettingsOpen] = createSignal(false)
+const [liveEnabled, setLiveEnabled] = createSignal(false)
+const [livePreparing, setLivePreparing] = createSignal(false)
+let liveMode: LiveConversationMode | null = null
+let liveAttempt = 0
+let liveSpeechChild: ChildProcess | null = null
 let settings: Settings = { mic: "", voice: "heart", threshold: -35, gain: 6, readAloud: true }
 let updateSettings: ((mutation: (draft: Settings) => void) => Promise<void>) | undefined
 type DictationTurn = {
@@ -92,6 +99,8 @@ type DictationTurn = {
   loading: boolean
   cancelled: boolean
   stopRequested: boolean
+  finished: Promise<void>
+  finish(): void
 }
 let dictationTurn: DictationTurn | null = null
 let dictationCounter = 0
@@ -159,6 +168,10 @@ function helperPayload(args: string[], timeoutMs: number | null, track?: (child:
     childProcess.stdout?.on("data", data => {
       stdout += data
       if (onEvent) {
+        // Streaming helpers can stay open for hours. Retain only the last
+        // complete JSON line and the unfinished line, not the whole session.
+        const previousLine = stdout.lastIndexOf("\n", stdout.length - 2)
+        if (previousLine >= 0) stdout = stdout.slice(previousLine + 1)
         try { events(data) } catch (error) {
           expectedExit.add(childProcess)
           childProcess.kill("SIGTERM")
@@ -166,7 +179,7 @@ function helperPayload(args: string[], timeoutMs: number | null, track?: (child:
         }
       }
     })
-    childProcess.stderr?.on("data", data => { stderr += String(data) })
+    childProcess.stderr?.on("data", data => { stderr = (stderr + String(data)).slice(-8192) })
     childProcess.on("error", error => {
       clearTimeout(timer)
       track?.(null)
@@ -293,9 +306,11 @@ function ownsDictation(turn: DictationTurn) {
 }
 
 function beginDictation(): DictationTurn {
+  let finish = () => {}
+  const finished = new Promise<void>(resolve => { finish = resolve })
   const turn: DictationTurn = {
     id: ++dictationCounter, sessionID: "", child: null, ready: false, listening: false, loading: false,
-    cancelled: false, stopRequested: false,
+    cancelled: false, stopRequested: false, finished, finish,
   }
   dictationTurn = turn
   setActive(true)
@@ -326,6 +341,7 @@ function cancelDictation() {
 }
 
 function finishDictation(turn: DictationTurn) {
+  turn.finish()
   if (dictationTurn !== turn) return
   dictationTurn = null
   setActive(false)
@@ -396,6 +412,13 @@ async function ensureSession(context: any) {
 }
 
 async function toggleVoice(context: any) {
+  // F9/the original microphone always means Dictation. Switching away from
+  // Live drains its unfinished words into a draft before opening another mic.
+  if (livePreparing() || liveMode?.busy) {
+    liveAttempt += 1
+    setLivePreparing(false)
+    await liveMode?.stop()
+  }
   if (active()) {
     const turn = dictationTurn
     if (turn && !turn.stopRequested) {
@@ -496,6 +519,142 @@ async function toggleVoice(context: any) {
       if (draft.text && !turn.cancelled) queueDraft(context, draft)
     }
     finishDictation(turn)
+  }
+}
+
+function stopLiveSpeech() {
+  const child = liveSpeechChild
+  if (!child) return
+  liveSpeechChild = null
+  expectedExit.add(child)
+  try { child.kill("SIGTERM") } catch {}
+}
+
+function liveCapture(deliver: (event: any) => void): LiveCapture {
+  let child: ChildProcess | null = null
+  let ready = false
+  let stopRequested = false
+  let cancelled = false
+  const requestStop = () => {
+    stopRequested = true
+    if (child && ready) { try { child.kill("SIGUSR1") } catch {} }
+  }
+  const result: LiveCapture = {
+    done: Promise.resolve(),
+    stop: requestStop,
+    cancel: () => {
+      cancelled = true
+      if (child) {
+        expectedExit.add(child)
+        try { child.kill("SIGTERM") } catch {}
+      }
+    },
+  }
+  const args = ["listen", "--threshold", String(settings.threshold ?? -35),
+    "--gain", String(settings.gain ?? 0), "--silence", String(settings.liveSilence ?? 0.8)]
+  if (settings.mic) args.push("--mic", settings.mic)
+  result.done = helperPayload(args, null, process => {
+    child = process
+    if (child && cancelled) {
+      expectedExit.add(child)
+      try { child.kill("SIGTERM") } catch {}
+    }
+  }, event => {
+    if (event.event === "starting") {
+      ready = true
+      if (stopRequested) requestStop()
+    }
+    deliver(event)
+  })
+  return result
+}
+
+function configureLiveMode(context: any) {
+  let attached = true
+  const adapter = createOpenCodeLiveAdapter(context, {
+    allowPrivateNetwork: process.env.TUI_VOICE_LIVE_ALLOW_PRIVATE === "1",
+  })
+  liveMode = new LiveConversationMode(adapter, {
+    warm: () => prewarmWorkers("tts"),
+    listen: liveCapture,
+    speak: async text => {
+      let ownChild: ChildProcess | null = null
+      try {
+        await helperPayload(["say", "--text", text, "--voice", settings.voice || "heart"],
+          process.env.TUI_VOICE_TTS_PROVIDER?.trim().toLowerCase() === "migraphx" ? 600000 : 120000,
+          child => {
+            if (child) { ownChild = child; liveSpeechChild = child }
+            else if (liveSpeechChild === ownChild) liveSpeechChild = null
+          })
+      } finally {
+        if (liveSpeechChild === ownChild) liveSpeechChild = null
+      }
+    },
+    stopSpeech: stopLiveSpeech,
+  }, {
+    active: value => { if (attached) setLiveEnabled(value) },
+    state: value => { if (attached) setPhase(value) },
+    error: error => {
+      if (!attached) return
+      logError("live conversation", error)
+      toast(context, String((error as any)?.message || error || "Live conversation failed."), "error", 7000)
+    },
+    restoreDraft: (sessionID, text) => {
+      if (!attached || !text.trim()) return
+      queueDraft(context, {sessionID, text, writer: new LiveDraft(), final: true})
+      lastDictation = {sessionID, text}
+    },
+    captureEvent: event => {
+      if (!attached) return
+      if (event.event === "listening") {
+        lastMicrophone = event.device || ""
+        toast(context, "Live conversation on. Speak naturally; Ctrl+Alt+L stops it. Use headphones to avoid echo.", "success", 6000)
+      } else if (event.event === "model" && event.state === "loading") {
+        toast(context, "Loading the local recognizer. The microphone is buffering your words.", "info", 6000)
+      } else if (event.event === "model" && event.state === "failed") {
+        toast(context, "The local recognizer could not load. Live conversation needs the speech stack to be ready.", "warning", 6000)
+      }
+    },
+  })
+  liveMode.setMuted(!readAloudEnabled())
+  const ownedMode = liveMode
+  return () => {
+    attached = false
+    setLiveEnabled(false)
+    void ownedMode.stop(true)
+  }
+}
+
+async function toggleLive(context: any) {
+  if (livePreparing() || liveMode?.busy) {
+    liveAttempt += 1
+    setLivePreparing(false)
+    const stopping = liveMode?.stop()
+    toast(context, "Live conversation off. Finishing any unsent words into the draft.", "info")
+    await stopping
+    return
+  }
+  const attempt = ++liveAttempt
+  setLivePreparing(true)
+  try {
+    const dictation = dictationTurn
+    if (dictation) {
+      requestDictationStop(dictation)
+      toast(context, "Finishing dictation into the draft before starting Live conversation…", "info")
+      await dictation.finished
+    }
+    if (attempt !== liveAttempt) return
+    const route = await ensureSession(context)
+    if (attempt !== liveAttempt) return
+    stopSpeech()
+    speechState = null
+    interruptedSpeech = null
+    await liveMode?.start(route.sessionID)
+  } catch (error) {
+    logError("start live conversation", error)
+    toast(context, String((error as any)?.message || error), "error")
+  } finally {
+    if (attempt === liveAttempt) setLivePreparing(false)
   }
 }
 
@@ -632,7 +791,7 @@ function cycleVoice(direction: number) {
   void saveSetting("voice", next.id)
 }
 
-async function saveSetting(key: keyof Settings, value: string | number) {
+async function saveSetting(key: keyof Settings, value: string | number | boolean) {
   if (!updateSettings) return
   await updateSettings(draft => { (draft as any)[key] = value })
 }
@@ -722,6 +881,10 @@ function VoiceSettings(props: {onClose: () => void}) {
   }
 
   async function testMicrophone() {
+    if (active() || liveMode?.busy) {
+      setTestStatus("Stop dictation or Live conversation before testing the microphone.")
+      return
+    }
     setTestStatus("Recording 2 s…")
     try {
       const args = ["record", "--seconds", "2", "--silence", "0", "--gain", String(gain())]
@@ -746,6 +909,7 @@ function VoiceSettings(props: {onClose: () => void}) {
       draft.readAloud = true
       draft.voice = "heart"
       draft.idleMinutes = DEFAULT_IDLE_MINUTES
+      draft.liveSilence = 0.8
     })
     chooseIdle(context, 0)
     setTestStatus("")
@@ -801,12 +965,30 @@ function VoiceSettings(props: {onClose: () => void}) {
         description: "Speaks a sample. Use the footer speaker button to mute and unmute; it resumes the sample.",
         value: () => "Play sample",
         activate: () => {
+          if (liveMode?.busy) {
+            setTestStatus("Stop Live conversation before playing a read-aloud sample.")
+            return
+          }
           if (!readAloudEnabled()) {
             setTestStatus("Enable Read replies aloud first.")
             return
           }
           speakReply(context, "This is a local voice test. Read-aloud is speaking through the Windows speakers. Mute it with the speaker button, then unmute to resume.")
         },
+      },
+      {kind: "section", title: "LIVE CONVERSATION"},
+      {
+        kind: "item", id: "live", label: "Live conversation",
+        description: "Optional hands-free chat with your selected local model. Replies stream aloud and stop when you speak. Ctrl+Alt+L toggles it; use headphones.",
+        value: () => livePreparing() ? "Starting…" : liveEnabled() ? "On" : "Off",
+        adjust: () => { void toggleLive(context) },
+        activate: () => { void toggleLive(context) },
+      },
+      {
+        kind: "item", id: "liveSilence", label: "Pause before replying",
+        description: "Live mode only: silence that ends a spoken turn. Increase this if it answers during your pauses. Applies the next time Live starts.",
+        value: () => `${settings.liveSilence ?? 0.8} s`,
+        adjust: direction => cycleNumber("liveSilence", [0.5, 0.8, 1.2, 1.8, 2.5], 0.8, direction),
       },
       {kind: "section", title: "MEMORY"},
       {
@@ -886,7 +1068,7 @@ function VoiceSettings(props: {onClose: () => void}) {
       paddingLeft={2} paddingRight={2} paddingTop={1} paddingBottom={1}>
         <text fg={theme.text.base}>Voice settings</text>
         <text fg={theme.text.muted} wrapMode="word">
-          Local dictation types into the message box. Nothing is sent automatically.
+          Dictation keeps an editable draft. Optional Live conversation sends spoken turns automatically to your selected local model.
         </text>
         <box height={1} />
         <For each={rows()}>{(row, index) => row.kind === "section" ? (
@@ -971,7 +1153,9 @@ function VoiceButton(props: {sessionID?: string; panel: any}) {
     }
   })
   const indicator = () =>
-    phase() === "listening" ? {glyph: "●", color: "#f4b65f"}
+    liveEnabled() && phase() === "listening" ? {glyph: "◎", color: "#8ee0c8"}
+      : liveEnabled() && phase() === "speaking" ? {glyph: "◉", color: "#8ee0c8"}
+      : phase() === "listening" ? {glyph: "●", color: "#f4b65f"}
       : phase() === "transcribing" || phase() === "thinking" ? {glyph: "◐", color: "#99e7ff"}
       : phase() === "error" ? {glyph: "✕", color: "#fa9e95"}
       : {glyph: "○", color: "#3ca9e8"}
@@ -1028,6 +1212,7 @@ export default Plugin.define({
     updateSettings = update
     onToggle = () => { void toggleVoice(context) }
     onMute = () => { void toggleMute(context) }
+    const disposeLive = configureLiveMode(context)
     prewarmWorkers()
     void prepareDependencies(context)
     context.ui.toast.show({title: "tui-voice", message: "Ready · F9 or Ctrl+Alt+V", variant: "info", duration: 3000})
@@ -1037,12 +1222,15 @@ export default Plugin.define({
       if (lastReadAloud === null) { lastReadAloud = enabled; return }
       if (enabled === lastReadAloud) return
       lastReadAloud = enabled
+      liveMode?.setMuted(!enabled)
+      if (liveMode?.busy) return
       if (enabled) resumeInterruptedSpeech(context)
       else interruptSpeech()
     })
 
     createEffect(() => {
       const route = context.ui.router.current()
+      liveMode?.checkRoute()
       if (route?.type === "session" &&
           pendingDrafts.some(item => item.sessionID === route.sessionID)) {
         void flushPending(context)
@@ -1053,7 +1241,8 @@ export default Plugin.define({
       const route = context.ui.router.current()
       if (route?.type !== "session" || route.sessionID !== event?.data?.sessionID) return
       const text = String(event?.data?.text || "").trim()
-      if (text) speakReply(context, text)
+      if (text && liveMode?.sessionID !== event?.data?.sessionID
+          && !liveMode?.ownsMessage(event?.data?.assistantMessageID)) speakReply(context, text)
       if (pendingDrafts.some(item => item.sessionID === event?.data?.sessionID)) {
         void flushPending(context)
       }
@@ -1095,6 +1284,15 @@ export default Plugin.define({
       mode: "global",
       commands: [
         {
+          id: "tui.voice.live",
+          title: "Voice: Toggle Live conversation",
+          group: "Voice",
+          bind: "ctrl+alt+l",
+          palette: true,
+          slash: {name: "voice-live"},
+          run: () => toggleLive(context),
+        },
+        {
           id: "tui.voice.toggle",
           title: "Voice: Dictate into message",
           group: "Voice",
@@ -1135,7 +1333,7 @@ export default Plugin.define({
           run: async () => {
             try {
               await readLastReply(context, {
-                enabled: readAloudEnabled,
+                enabled: () => readAloudEnabled() && !liveMode?.busy,
                 generation: () => speechGeneration,
                 notify: message => toast(context, message, "info"),
                 replay: (text, sessionID) => {
@@ -1186,6 +1384,9 @@ export default Plugin.define({
     }))
 
     return () => {
+      liveAttempt += 1
+      setLivePreparing(false)
+      disposeLive()
       stopText()
       offFooter()
       stopSpeech()

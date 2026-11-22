@@ -77,7 +77,7 @@ You decide.         ──▶   edit, send, or just listen
 
 - **Hands off the keyboard.** Start dictation, keep talking through pauses, and
   stop with the same key.
-- **Never auto-sends.** The transcript is a draft you can edit; your prompt leaves
+- **Dictation never auto-sends.** The transcript is a draft you can edit; your prompt leaves
   only when you send it.
 - **Works during a reply.** Keep talking while the assistant is thinking — the
   transcript is held and placed when the message box returns.
@@ -86,10 +86,29 @@ You decide.         ──▶   edit, send, or just listen
 - **Yours, in every project.** Install once for your whole machine, or just for
   one project.
 
+## Optional live conversation
+
+Select a local model in OpenCode, then use **`Ctrl+Alt+L`**, **`/voice-live`**, or
+**Voice settings → Live conversation**. Speak a turn, hear the reply as it is
+generated, and speak again to interrupt it. Use headphones to avoid the speaker
+feeding back into the microphone.
+
+Live conversation starts **Off**. Ordinary **F9 dictation** keeps its editable
+draft and manual Send. Turning Live off stops its response and returns unfinished
+recognized words to the draft. The speaker toggle mutes Live without replaying a
+backlog when unmuted.
+
+The selected model must have an explicit local endpoint; the plugin does not
+download a language model or fall back to a cloud model. See
+[Live conversation](docs/LIVE_CONVERSATION.md) for requirements, controls,
+verification, and the limits of silence-based turn detection.
+
 ## Private by default
 
 Your microphone audio is processed in memory and never uploaded. The transcript
-goes only into your local OpenCode draft. Read-aloud is synthesized by a local
+goes into your local OpenCode draft in Dictation mode. Explicitly enabled Live
+conversation sends completed turns to the selected local model through OpenCode.
+Read-aloud is synthesized by a local
 Kokoro model and played through your own speakers.
 
 **No cloud speech services. No accounts. No telemetry.**

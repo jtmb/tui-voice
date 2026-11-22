@@ -30,6 +30,7 @@ import setup_stack
 import voice_config
 from tts_worker import CPU_PROVIDER, requested_provider, startup_timeout, validate_backend
 from live_dictation import FRAME_BYTES, LiveTranscriber
+from live_conversation import LiveConversation
 
 # No repository or home-directory default: see voice_config for the lookup order.
 SERVICE = voice_config.service()
@@ -418,29 +419,54 @@ def record(seconds, path=None, mic=None, silence=1.5, threshold=-35, gain=0):
     return result
 
 
-def dictate(mic=None, threshold=-35, gain=0, emit=None):
+def dictate(mic=None, threshold=-35, gain=0, emit=None, *, conversation=False, silence=0.8):
     """Stream local hypotheses until explicitly switched off; no silence/time cutoff."""
     global _current, _stop_requested
     emit = emit or (lambda value: print(json.dumps(value, ensure_ascii=False), flush=True))
     emit_lock = threading.Lock()
     send = emit
+    cancel_asr = threading.Event()
 
     def emit(value):  # the loader thread and the capture loop both report events
         with emit_lock:
-            send(value)
+            if not (conversation and cancel_asr.is_set()):
+                send(value)
 
-    emit({'event': 'starting'})  # SIGUSR1 is safe only after this handshake.
     loader = ModelLoader(emit)
+
+    def decode(pcm):
+        encoded = _encode_wav(pcm, 1, 2, 16000)
+        if conversation:
+            if cancel_asr.is_set():
+                return ''
+            if not loader.ensure():
+                raise RuntimeError('Live Voice needs the local ASR worker. Run: ' + stack_fix_command())
+            result = warm_transcribe(encoded, cancel_event=cancel_asr, required=True)
+        else:
+            result = warm_transcribe(encoded) if loader.ensure() else None
+            if result is None:
+                result = cold_voice().transcribe(encoded)
+        return result.get('text', '') if result else ''
+
+    # Validate conversation settings before opening any capture process.
+    live = (LiveConversation(decode, emit, threshold=threshold, silence=silence,
+                             cancel_event=cancel_asr) if conversation
+            else LiveTranscriber(decode, emit, threshold=threshold))
+    emit({'event': 'starting'})  # SIGUSR1 is safe only after this handshake.
     # Start loading now, in parallel with opening the microphone, so the user is
     # told immediately and nothing waits for the model before recording begins.
     threading.Thread(target=loader.ensure, daemon=True).start()
     if _stop_requested:
         _stop_requested = False
+        if conversation:
+            cancel_asr.set()
         return {'ok': True, 'text': ''}
     # A known device needs no repeated device enumeration on every turn.
     device = mic or choose_mic()[0]
     if _stop_requested:
         _stop_requested = False
+        if conversation:
+            cancel_asr.set()
         return {'ok': True, 'text': ''}
     command = ([ffmpeg(), '-hide_banner', '-loglevel', 'error']
                + audio_backend.capture_args(device, streaming=True)
@@ -461,14 +487,6 @@ def dictate(mic=None, threshold=-35, gain=0, emit=None):
     reader = threading.Thread(target=errors, daemon=True)
     reader.start()
 
-    def decode(pcm):
-        encoded = _encode_wav(pcm, 1, 2, 16000)
-        result = warm_transcribe(encoded) if loader.ensure() else None
-        if result is None:
-            result = cold_voice().transcribe(encoded)
-        return result.get('text', '') if result else ''
-
-    live = LiveTranscriber(decode, emit, threshold=threshold)
     live.start()
     received = 0
     stopped = False
@@ -499,8 +517,12 @@ def dictate(mic=None, threshold=-35, gain=0, emit=None):
     watchdog = threading.Thread(target=watch_capture, daemon=True)
     watchdog.start()
     try:
+        if conversation and _stop_requested:
+            # A toggle can land after Popen starts ffmpeg but before _current
+            # is assigned. Honor it before waiting for the very first sample.
+            stop_capture()
         while True:
-            block = process.stdout.read(FRAME_BYTES // 10)
+            block = process.stdout.read(FRAME_BYTES // (50 if conversation else 10))
             if not block:
                 break
             if len(block) % 2:
@@ -520,15 +542,20 @@ def dictate(mic=None, threshold=-35, gain=0, emit=None):
         # Capture is over: a later stop signal must not touch its pipes while
         # local ASR is still running on the audio already received.
         _current = None
-        if not received or (process.returncode and not stopped):
+        early_live_stop = conversation and _stop_requested
+        if (not received and not early_live_stop) or (process.returncode and not stopped
+                                                     and not early_live_stop):
             raise RuntimeError('Microphone capture failed: ' +
                                (tail.decode('utf-8', errors='replace').strip() or 'no audio received'))
         emit({'event': 'transcribing'})
         text = live.finish()
-        log_event('info', 'live dictation', device=device, bytes=received,
+        log_event('info', 'live conversation' if conversation else 'live dictation',
+                  device=device, bytes=received,
                   seconds=round(received / FRAME_BYTES, 2),
                   elapsed=round(time.monotonic() - started, 2), characters=len(text))
-        return {'ok': True, 'text': text, 'device': device, 'raw_audio_retained': False}
+        result = {'ok': True, 'device': device, 'raw_audio_retained': False}
+        result.update({'turns': live.turns} if conversation else {'text': text})
+        return result
     finally:
         watchdog_done.set()
         live.cancel()
@@ -546,12 +573,17 @@ def dictate(mic=None, threshold=-35, gain=0, emit=None):
         _stop_requested = False
 
 
+def listen(mic=None, threshold=-35, gain=0, silence=0.8, emit=None):
+    """Keep listening until toggled off, emitting interruption and final-turn events."""
+    return dictate(mic, threshold, gain, emit, conversation=True, silence=silence)
+
+
 class StackNotReady(RuntimeError):
     """The local speech stack is missing or still being installed."""
 
 
 REEXEC_ENV = 'TUI_VOICE_REEXEC'
-STACK_COMMANDS = ('dictate', 'say', 'transcribe', 'warm')
+STACK_COMMANDS = ('dictate', 'listen', 'say', 'transcribe', 'warm')
 
 
 def stack_interpreter():
@@ -639,14 +671,30 @@ def tts_socket():
     return runtime_base() / 'tui-voice/tts.sock'
 
 
-def _recv_exact(connection, size):
+def _recv_exact(connection, size, cancel_event=None, deadline=None):
+    def check_cancel_and_deadline():
+        if cancel_event is not None:
+            if cancel_event.is_set():
+                raise InterruptedError('Local voice listening cancelled')
+            if deadline is not None and time.monotonic() >= deadline:
+                raise TimeoutError('Local ASR response exceeded its timeout')
+
     parts = []
     while size:
-        part = connection.recv(min(size, 65536))
+        check_cancel_and_deadline()
+        try:
+            part = connection.recv(min(size, 65536))
+        except TimeoutError:
+            if cancel_event is None or deadline is None or time.monotonic() >= deadline:
+                raise
+            continue
         if not part:
             raise ConnectionError('Warm worker closed mid-frame')
         parts.append(part)
         size -= len(part)
+    # A peer that keeps trickling bytes need never trigger socket.timeout.
+    # The final recv must also finish inside the same whole-response budget.
+    check_cancel_and_deadline()
     return b''.join(parts)
 
 
@@ -655,26 +703,31 @@ def _frame(connection, message):
     connection.sendall(len(data).to_bytes(4, 'big') + data)
 
 
-def _frame_in(connection):
-    size = int.from_bytes(_recv_exact(connection, 4), 'big')
+def _frame_in(connection, cancel_event=None, deadline=None):
+    size = int.from_bytes(_recv_exact(connection, 4, cancel_event, deadline), 'big')
     if not 0 < size <= 16 * 1024 * 1024:
         raise ValueError('Warm worker frame outside finite budget')
-    return json.loads(_recv_exact(connection, size))
+    return json.loads(_recv_exact(connection, size, cancel_event, deadline))
 
 
-def worker_request(path, request, timeout=180, quiet=False, required=False):
+def worker_request(path, request, timeout=180, quiet=False, required=False,
+                   cancel_event=None, worker_kind='TTS'):
     """Talk to a worker; required=True raises instead of allowing cold fallback."""
     try:
         import socket
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
+            if cancel_event is not None and cancel_event.is_set():
+                raise InterruptedError('Local voice listening cancelled')
             connection.settimeout(2)
             connection.connect(str(path))
-            connection.settimeout(timeout)
+            connection.settimeout(min(timeout, 0.2) if cancel_event is not None else timeout)
             _frame(connection, request)
-            response = _frame_in(connection)
+            response = _frame_in(connection, cancel_event, time.monotonic() + timeout)
     except (OSError, ValueError, ConnectionError) as error:
+        if cancel_event is not None and cancel_event.is_set():
+            raise InterruptedError('Local voice listening cancelled') from error
         if required:
-            raise RuntimeError(f'Required TTS worker unavailable at {path}: {error}') from error
+            raise RuntimeError(f'Required {worker_kind} worker unavailable at {path}: {error}') from error
         if not quiet:
             print(f'Warm worker unavailable at {path} ({error}); using cold path', file=sys.stderr)
             log_event('warning', 'warm worker unavailable', socket=str(path), detail=str(error))
@@ -682,7 +735,7 @@ def worker_request(path, request, timeout=180, quiet=False, required=False):
     if not isinstance(response, dict) or response.get('ok') is not True:
         detail = response.get('error') if isinstance(response, dict) else 'malformed response'
         if required:
-            raise RuntimeError(f'Required TTS worker rejected request: {detail}')
+            raise RuntimeError(f'Required {worker_kind} worker rejected request: {detail}')
         if not quiet:
             print(f'Warm worker rejected request ({detail}); using cold path', file=sys.stderr)
             log_event('warning', 'warm worker rejected request', socket=str(path), detail=str(detail))
@@ -737,12 +790,16 @@ class ModelLoader:
             return loaded
 
 
-def warm_transcribe(encoded):
-    result = worker_request(asr_socket(), {'operation': 'transcribe', 'wav': encoded}, timeout=120)
+def warm_transcribe(encoded, cancel_event=None, required=False):
+    result = worker_request(asr_socket(), {'operation': 'transcribe', 'wav': encoded},
+                            timeout=30 if required else 120, cancel_event=cancel_event,
+                            required=required, worker_kind='ASR')
     if (result is None or not isinstance(result.get('text'), str)
             or not isinstance(result.get('confidence'), (int, float))
             or not isinstance(result.get('engine'), str)
             or result.get('raw_audio_retained') is not False):
+        if required:
+            raise RuntimeError('Required ASR worker returned a malformed transcript')
         return None
     return result
 
@@ -1184,6 +1241,13 @@ def main():
     live.add_argument('--threshold', type=float, default=-35)
     live.add_argument('--gain', type=float, default=0)
 
+    conversation = sub.add_parser('listen', help='continuous local voice conversation as JSON lines')
+    conversation.add_argument('--mic')
+    conversation.add_argument('--threshold', type=float, default=-35)
+    conversation.add_argument('--gain', type=float, default=0)
+    conversation.add_argument('--silence', type=float, default=0.8,
+                              help='end-of-turn silence in seconds (0.2..5; default 0.8)')
+
     transcribe_parser = sub.add_parser('transcribe')
     transcribe_parser.add_argument('--wav', required=True)
 
@@ -1252,6 +1316,8 @@ def main():
         output(transcribe(args.wav))
     elif args.command == 'dictate':
         output(dictate(args.mic, args.threshold, args.gain))
+    elif args.command == 'listen':
+        output(listen(args.mic, args.threshold, args.gain, args.silence))
     elif args.command == 'play':
         output(play(args.wav))
     elif args.command == 'say':

@@ -13,6 +13,9 @@ In particular:
 - The voice button stays in the **bottom footer**. Do not move it to the composer,
   a dialog, or a floating overlay.
 - Dictation **types into the message box** and never sends automatically.
+- Optional **Live conversation** is a separate explicit toggle. Only that mode
+  automatically submits spoken turns, to the selected local model in the same
+  chat. Read [docs/LIVE_CONVERSATION.md](docs/LIVE_CONVERSATION.md) before changing it.
 - Dictation is manual on/off: pauses and long turns must not auto-stop it.
 - Recording works while a reply is running; transcribe immediately and queue the
   draft until the message box returns.
@@ -61,6 +64,10 @@ interpreters/models and a local `ffmpeg`.
 tui.tsx                 OpenCode TUI plugin: footer button, settings dialog, queues
 live_draft.ts           Footer-anchored native composer updates and draft ownership
 live_dictation.py       Single-flight bounded streaming ASR and live hypotheses
+live_conversation.py    Continuous microphone turn detection and bounded local ASR
+live_controller.ts     Live turn scheduling, streamed phrases, cancellation
+opencode_live.ts        Verified OpenCode v2 API and local-model selection bridge
+live_mode.ts            Live microphone/session lifecycle and draft recovery
 voice_helper.py         Local mic capture, VAD, Whisper transcription, Kokoro TTS
 audio_backend.py        Platform audio: ffmpeg, devices, capture argv, playback
 voice_config.py         Portable settings: stack dirs, interpreters, audio overrides
@@ -141,6 +148,9 @@ plugin requires closing and reopening the TUI; `/reload` alone is not sufficient
 - Settings are stored under the `tui-voice` key and apply globally.
 - Dictation is queued if the session is replying; read-aloud is a separate queued
   speech path.
+- Live conversation listens while speaking, consumes `session.text.delta`, and
+  uses `session.prompt` / `session.interrupt` through the separate v2 adapter.
+  It requires the existing warm local ASR worker. No new model download is added.
 
 ## Verification checklist
 
@@ -181,7 +191,8 @@ plugin requires closing and reopening the TUI; `/reload` alone is not sufficient
 
 - Keep audio local. Never add a cloud STT/TTS provider without explicit owner
   approval.
-- Never send a transcript automatically; only insert into the draft.
+- Dictation never sends a transcript automatically. Explicitly enabled Live is
+  the scoped exception in `rules.md`; keep its local-model check and OFF guard.
 - Do not add TV/ADB/Control Center management to this plugin.
 - Keep secrets out of source; paths/overrides belong in environment variables.
 - Do not commit `.wav` files, recordings, or private transcripts.

@@ -1,6 +1,6 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { lastAssistantText, readLastReply } from "../read_last"
+import { lastAssistantText, readLastReply } from "../read_last.ts"
 
 const reply = (created: number, text: string, completed: number | undefined = 10) => ({
   type: "assistant", time: {created, completed}, content: [{type: "text", text}],
