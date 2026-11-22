@@ -38,7 +38,7 @@ requirements remain.
 - A second press while listening must gracefully stop the recording at that point
   and transcribe everything recorded so far. It must not drop the audio or force
   the user to wait for another silence.
-- Never send the prompt automatically. The user reviews and sends it.
+- Dictation never sends the prompt automatically. The user reviews and sends it.
 - Editing the message box while dictating must never stop dictation. Text the user
   types or fixes, before, inside or after the dictated words, is kept; speech
   continues after it with only the words not yet shown, and the final transcript
@@ -70,6 +70,30 @@ requirements remain.
 - It must remain functional; do not silently remove it or move it to another
   surface.
 
+## Optional Live conversation — owner request, 2026-11-22
+
+- Keep ordinary Dictation as the default, with its existing manual toggle and
+  editable, unsent draft. Live is a separate explicit On/Off control in settings,
+  the command palette, `/voice-live`, and `Ctrl+Alt+L`; it is Off on every start.
+- Only while Live is explicitly enabled, automatically submit finalized spoken
+  turns to the selected local model in the same OpenCode session. Validate the
+  effective model endpoint; never silently choose a cloud provider.
+- Listen during generated speech, start speaking from incremental assistant
+  text, and stop current/queued speech on user interruption. Await scoped model
+  interruption before admitting the next spoken turn.
+- Turning Live off or switching chats stops the owned response. Recognized words
+  that were not submitted are recovered to the original chat's draft. Late
+  transcripts, model events, and pending startup cannot restart the conversation.
+- Microphone ownership is exclusive: finish the previous mode before starting
+  another. The existing footer stays one row with fixed cell widths; Live uses
+  its status glyph rather than adding a taller panel.
+- Speaker mute is independent. In Live, discard interrupted/muted speech rather
+  than replaying stale audio on unmute. Ordinary read-aloud keeps its resume
+  behavior.
+- Headphones are the supported initial acoustic setup. The amplitude gate and
+  configurable silence endpoint are not acoustic echo cancellation or semantic
+  turn detection. Do not claim measured RX 7900 XT latency without hardware data.
+
 ## Settings
 
 - Settings are global and persisted under `tui-voice`.
@@ -86,7 +110,8 @@ requirements remain.
 
 - Audio is local; temporary capture files are deleted after transcription.
 - Warm ASR/TTS workers are local AF_UNIX helpers; keep them local and optional.
-- No cloud service, TV, ADB, Control Center login, upload, or automatic prompt send.
+- No cloud speech service, TV, ADB, Control Center login, or audio upload.
+  Automatic prompt submission is permitted only in explicitly enabled Live mode.
 - Use a local Whisper/Kokoro stack; the plugin provisions its own by default
   (`setup_stack.py`). Do not add a remote provider.
 

@@ -1,6 +1,6 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { LiveDraft, locateComposer, jsonLines } from "../live_draft"
+import { LiveDraft, locateComposer, jsonLines } from "../live_draft.ts"
 
 function editor(initial = "") {
   let value = initial

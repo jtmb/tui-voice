@@ -1,5 +1,101 @@
 # tui-voice handoff
 
+## 2026-11-22 — local Live conversation implementation, cloud-to-local handoff
+
+### Environment, exact base, and next owner
+
+- **This implementation was built and tested on a cloud computer**, in an
+  isolated checkout. It was not installed or tested on James's local computer.
+- Repository: `https://github.com/jtmb/tui-voice`.
+- Exact starting base: **`23522feb1b3561681b1a7cd37b239def65f72ec9`** on `main`
+  (2026-11-20, “Save the last-word and read-aloud seek plan, with a handoff”).
+- Implementation branch: **`feat/live-conversation`**. Read the PR's current head
+  for the final implementation commit; the SHA above is the base, not its head.
+- **The next agent works on the local computer in OpenCode Desktop.** This
+  remains an OpenCode **TUI plugin** exported through `./tui`; it is not a new
+  standalone app or a native Desktop GUI extension. Review how the locally
+  installed OpenCode Desktop/TUI hosts this entrypoint before enabling it.
+- The owner explicitly requires **compatibility review by the taking-over
+  agent**. Compare the installed OpenCode version/API and local checkout with
+  this branch before merging or activating it. No merge or local installation
+  was performed by the cloud implementation.
+
+### Accepted scope and changes
+
+- Owner first asked for a plan/PR, then explicitly asked for **working code in a
+  PR**. Existing transcription must remain independently toggleable. The
+  scoped automatic-send exception is recorded in `rules.md`.
+- Added optional Live conversation through `Ctrl+Alt+L`, `/voice-live`, command
+  palette, and settings. It starts Off; F9 Dictation keeps its editable draft
+  and manual Send. The footer keeps its existing one-row size.
+- Continuous capture emits immediate speech activity plus ordered final turns;
+  local ASR runs independently with bounded requests and backlog. Streamed
+  assistant text reaches Kokoro a phrase at a time. Barge-in discards current
+  and queued audio and interrupts the owned OpenCode response.
+- The native v2 adapter validates the selected model's effective local endpoint
+  and uses the existing chat/context/tool permissions. OFF, route changes,
+  pending prompt admission and late events cannot start a fresh live turn.
+  Unsubmitted recognized words return to the original draft; failures are
+  reported. Ordinary read-aloud still has its existing resume behavior.
+- Source map, controls, requirements and hardware acceptance steps:
+  [docs/LIVE_CONVERSATION.md](docs/LIVE_CONVERSATION.md).
+
+### Verification performed on the cloud computer
+
+- Node **24.22.3**: `npm run test:ts` — **48 passed**, including existing draft
+  and read-last checks, controller/adapter behavior, and composed mode tests.
+- Python **3.12**: **205 tests run; 201 passed; 4 environment-blocked errors**.
+  The four existing `test_model_loading.WorkerProtocolTests` cannot create
+  AF_UNIX sockets in this executor (`PermissionError: Operation not permitted`).
+  The unchanged starting base has the same four errors (188/192 passed).
+  They were not removed, weakened, or counted as passing.
+- All **13 new Python Live tests** passed. Linux PulseAudio/ALSA and WSL
+  DirectShow argument paths were exercised with injected capture and ASR.
+- The TUI source bundles successfully with **esbuild 0.28.2** and
+  `git diff --check` passes. Runtime dependencies were kept outside the repo.
+- **Native cloud TUI smoke passed on official OpenCode v2.3.2**, using isolated
+  XDG directories and fake speech helpers: the footer rendered; Voice settings
+  showed Live Off and the 0.8 s pause; Ctrl+Alt+L refused the default remote model
+  before opening a microphone; F9 streamed a known transcript into the editable
+  composer and F9 stop left it unsent. This proves host/plugin wiring on that
+  cloud version, not local Desktop compatibility or physical audio behavior.
+- Physical microphone/speaker behavior, acoustic interruption timing, actual
+  local model latency and RX 7900 XT inference are **not verified** here.
+  This first implementation uses amplitude/silence detection and headphones;
+  it does not add acoustic echo cancellation or semantic turn detection.
+
+### Local compatibility review and continuation
+
+1. In OpenCode Desktop on the **local computer**, inspect the existing checkout
+   before changing it: `git status --short --branch`, current branch/HEAD, local
+   changes, remotes, and ahead/behind state. Reuse that checkout; do not create
+   duplicate application checkouts or overwrite local edits.
+2. Fetch the repository and `feat/live-conversation`. Compare the exact base
+   above against current `origin/main` and the local branch. If either is ahead,
+   review both diffs and integrate deliberately; **do not reset newer work back
+   to the cloud base**. Preserve the separate November 20 last-word/seek plan.
+3. Read `AGENTS.md`, `rules.md`, `MEMORY.md`, this entry and
+   `docs/LIVE_CONVERSATION.md`. Review the changes for the actual local
+   OpenCode v2 client, TUI host/plugin loader, selected-model schema and event
+   names. The cloud API review used current upstream v2 sources; local
+   compatibility remains a required review, not an assumption.
+4. Run `npm run test:ts` and the Python suite using the local storage/output
+   wrapper when applicable. Re-run the four Unix-socket worker checks locally.
+   Inspect existing speech configuration and worker interpreters; do not copy
+   cloud paths, temporary tools, or settings into the local runtime.
+5. Follow the fresh-TUI acceptance sequence in `docs/LIVE_CONVERSATION.md`:
+   ordinary dictation, actual local model, early spoken phrases, barge-in,
+   OFF during speech/admission, mute, mode/chat changes and recovery of final
+   words. Fully restart the local TUI when plugin loading requires it.
+6. Validate the actual microphone/speaker path and benchmark the RX 7900 XT
+   separately. Follow `docs/AMD_GPU.md` for an already authorized GPU setup;
+   no driver or model change is implied by this cloud PR. Record compatibility
+   fixes and real measurements in this handoff before declaring hardware ready.
+
+The next action is the local agent's compatibility review against its actual
+checkout and installed OpenCode Desktop/TUI. This PR is not an instruction to
+replace newer local work or claim cloud verification as local verification.
+
 ## 2026-11-20 — plan saved: last-word cutoff and read-aloud seek
 
 - Owner reported two things: speech cuts off the last word (confirmed **both**

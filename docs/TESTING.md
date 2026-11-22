@@ -1,5 +1,32 @@
 # Testing
 
+## Live conversation regression checks
+
+Node 24 can run all TypeScript behavior tests without bundling or a test
+framework:
+
+```bash
+npm run test:ts
+python3 -B -m unittest discover -s tests -p 'test_live_conversation.py' -v
+```
+
+The new tests cover real controller/adapter/mode composition with injected
+capture and playback, early streamed phrases, interruption/admission ordering,
+stale responses, OFF during startup or speech, original-chat draft recovery,
+effective local-model checks, empty/late ASR results, bounded queues and final
+words. Python capture tests exercise PulseAudio, ALSA, and WSL DirectShow
+argument selection with injected devices. These are not physical audio tests.
+The acceptance procedure for real hosts is in
+[LIVE_CONVERSATION.md](LIVE_CONVERSATION.md#verification-and-rollout).
+
+Use the output routing appropriate to the machine. The owner's Windows/WSL
+checkout uses `tools/artifact_env.py` and the mounted H drive. The cloud PR
+checkout has no H mount: tests there use task-owned temporary output and
+`PYTHONDONTWRITEBYTECODE=1` / `TUI_VOICE_LOG_DIR`; they do not touch the owner's
+speech runtime or settings. Four existing `WorkerProtocolTests` require Unix
+sockets and are blocked when an executor refuses AF_UNIX; report those as
+environment-blocked, not passed. The current run's evidence is in `HANDOFF.md`.
+
 Run the focused provider/fallback regression checks with the standard library:
 
 ```bash
